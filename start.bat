@@ -1,11 +1,11 @@
 @echo off
-REM Startet VoiceClone v2 (legt beim ersten Start eine virtuelle Umgebung an)
+REM Startet VoiceClone v2 (richtet beim ersten Start alles automatisch ein)
 cd /d "%~dp0"
-if not exist .venv (
-  python -m venv .venv
-  .venv\Scripts\python -m pip install --upgrade pip
-  .venv\Scripts\pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
-  .venv\Scripts\pip install -r requirements.txt
+if not exist ".venv\Scripts\python.exe" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
+  if errorlevel 1 exit /b 1
 )
-.venv\Scripts\python app.py %*
+echo Starte VoiceClone v2 ... der Browser oeffnet sich automatisch.
+echo Beim ersten Start wird das Modell (ca. 5 GB) heruntergeladen.
+".venv\Scripts\python.exe" app.py --inbrowser %*
 pause

@@ -235,6 +235,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true", help="Öffentlichen Gradio-Link erzeugen")
+    parser.add_argument("--inbrowser", action="store_true", help="Browser automatisch öffnen")
     args = parser.parse_args()
 
     global ENGINE
@@ -243,7 +244,7 @@ def main():
         _ = ENGINE.model
 
     build_ui().queue(default_concurrency_limit=1).launch(
-        server_name=args.host, server_port=args.port, share=args.share,
+        server_name=args.host, server_port=args.port, share=args.share, inbrowser=args.inbrowser,
         theme=gr.themes.Soft(), allowed_paths=[str(ve.VOICES_DIR), str(ve.OUTPUTS_DIR)],
     )
 

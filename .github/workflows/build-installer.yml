@@ -1,0 +1,20 @@
+name: Windows-Installer bauen
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: NSIS installieren
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Installer bauen
+        run: makensis installer/VoiceCloneV2.nsi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoiceCloneV2-Setup
+          path: installer/VoiceCloneV2-Setup.exe

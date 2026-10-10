@@ -26,8 +26,28 @@ GAP_SECONDS = 0.3
 # --------------------------------------------------------------------------- #
 # Audio-Aufbereitung
 # --------------------------------------------------------------------------- #
+def _ffmpeg_to_wav(path: str) -> str:
+    """Konvertiert Formate, die soundfile nicht lesen kann (z. B. M4A/AAC), per FFmpeg."""
+    import subprocess
+    import tempfile
+
+    try:
+        import imageio_ffmpeg
+
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+    subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", path, "-ac", "1",
+                    "-ar", str(REF_SAMPLE_RATE), out], check=True)
+    return out
+
+
 def _load_clean(path: str, top_db: float = 35.0) -> np.ndarray:
-    audio, _ = librosa.load(path, sr=REF_SAMPLE_RATE, mono=True)
+    try:
+        audio, _ = librosa.load(path, sr=REF_SAMPLE_RATE, mono=True)
+    except Exception:
+        audio, _ = librosa.load(_ffmpeg_to_wav(path), sr=REF_SAMPLE_RATE, mono=True)
     if audio.size == 0:
         return audio
     audio, _ = librosa.effects.trim(audio, top_db=top_db)
