@@ -19,7 +19,7 @@ Var PSEXE
 
 !define APPNAME "VoiceClone v2"
 !define APPKEY  "VoiceCloneV2"
-!define VERSION "2.2.0"
+!define VERSION "2.2.1"
 !define UNINST  "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPKEY}"
 
 ; Programmstarter mit Icon zuerst bauen

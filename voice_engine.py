@@ -98,10 +98,10 @@ def _ffmpeg_to_wav(path: str) -> str:
 
 # Speicherformate für erzeugte Audios (intern wird immer verlustfrei als WAV gespeichert)
 EXPORT_FORMATS = {
-    "wav": {"ext": ".wav", "label": "WAV-Audio", "args": None},
-    "mp3": {"ext": ".mp3", "label": "MP3-Audio", "args": ["-c:a", "libmp3lame", "-b:a", "192k"]},
-    "ogg": {"ext": ".ogg", "label": "OGG-Vorbis-Audio", "args": ["-c:a", "libvorbis", "-q:a", "6"]},
-    "mp4": {"ext": ".mp4", "label": "MP4-Audio (AAC)", "args": ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]},
+    "wav": {"ext": ".wav", "label": "WAV Audio", "args": None},
+    "mp3": {"ext": ".mp3", "label": "MP3 Audio", "args": ["-c:a", "libmp3lame", "-b:a", "192k"]},
+    "ogg": {"ext": ".ogg", "label": "OGG Vorbis Audio", "args": ["-c:a", "libvorbis", "-q:a", "6"]},
+    "mp4": {"ext": ".mp4", "label": "MP4 Audio AAC", "args": ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]},
 }
 
 

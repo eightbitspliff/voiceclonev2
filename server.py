@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,7 @@ from pydantic import BaseModel
 import voice_engine as ve
 
 STATIC_DIR = ve.BASE_DIR / "ui"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 
 app = FastAPI(title="VoiceClone v2")
 settings = ve.load_settings()
@@ -416,8 +417,10 @@ def history_save_as(file: str, body: SaveAsIn | None = None):
     if spec is None:
         raise HTTPException(400, f"Unbekanntes Format: {fmt}")
     save_mode = getattr(getattr(webview, "FileDialog", None), "SAVE", None) or webview.SAVE_DIALOG
+    # pywebview erlaubt in der Filterbeschreibung nur Buchstaben, Ziffern und Leerzeichen
+    label = re.sub(r"[^\w ]+", " ", spec["label"]).strip()
     target = window.create_file_dialog(save_mode, save_filename=Path(file).stem + spec["ext"],
-                                       file_types=(f"{spec['label']} (*{spec['ext']})",))
+                                       file_types=(f"{label} (*{spec['ext']})",))
     if not target:
         return {"ok": False, "cancelled": True}
     target = Path(target[0] if isinstance(target, (list, tuple)) else target)
