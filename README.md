@@ -62,10 +62,10 @@ python voiceclone.pyw --browser  # stattdessen im Browser öffnen
 | `server.py` | Lokale API (FastAPI) |
 | `voice_engine.py` | Audio-Aufbereitung, Stimmprofile, Aufnahme, VoxCPM2-Synthese |
 | `ui/` | Oberfläche (HTML/CSS/JS, läuft offline) |
-| `install.ps1` | Einrichtung unter Windows (Python, PyTorch, Pakete) |
+| `install.ps1` | Einrichtung unter Windows (eigenes Python über uv, PyTorch, Pakete) |
 | `installer/` | NSIS-Skripte für Setup und `VoiceClone.exe` |
 
-Installer bauen (mit NSIS): `makensis installer/VoiceCloneV2.nsi`.
+Installer bauen (mit NSIS): `installer/build.sh`.
 Bei jedem Push baut GitHub Actions den Installer automatisch (Artefakt *VoiceCloneV2-Setup*).
 
 ## Hinweis

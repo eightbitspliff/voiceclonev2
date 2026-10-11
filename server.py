@@ -19,7 +19,7 @@ from pydantic import BaseModel
 import voice_engine as ve
 
 STATIC_DIR = ve.BASE_DIR / "ui"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0.1"
 
 app = FastAPI(title="VoiceClone v2")
 settings = ve.load_settings()

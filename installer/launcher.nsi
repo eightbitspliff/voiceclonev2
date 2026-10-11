@@ -6,10 +6,10 @@ OutFile "VoiceClone.exe"
 Icon "..\ui\icon.ico"
 RequestExecutionLevel user
 SilentInstall silent
-VIProductVersion "2.0.0.0"
+VIProductVersion "2.0.1.0"
 VIAddVersionKey "ProductName" "VoiceClone v2"
 VIAddVersionKey "FileDescription" "VoiceClone v2 - Stimmen klonen mit VoxCPM2"
-VIAddVersionKey "FileVersion" "2.0.0"
+VIAddVersionKey "FileVersion" "2.0.1"
 VIAddVersionKey "LegalCopyright" "Apache-2.0 (VoxCPM2: OpenBMB)"
 
 Section
