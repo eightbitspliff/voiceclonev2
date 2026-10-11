@@ -136,6 +136,26 @@ try {
     & $uv pip install --python $VenvPy -r (Join-Path $AppDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "Paket-Installation fehlgeschlagen" }
 
+    if ($gpu -and $OnWindows) {
+        Step "Installiere Triton fuer Windows (Beschleunigung mit torch.compile)"
+        # Jede PyTorch-Version braucht eine bestimmte Triton-Version (siehe triton-windows README)
+        $tritonSpec = & $VenvPy -c "import torch; m = tuple(int(x) for x in torch.__version__.split('+')[0].split('.')[:2]); t = {(2,7):(3,3),(2,8):(3,4),(2,9):(3,5),(2,10):(3,6),(2,11):(3,6),(2,12):(3,7),(2,13):(3,7),(2,14):(3,8)}.get(m); print('triton-windows>=%d.%d,<%d.%d' % (t[0], t[1], t[0], t[1] + 1) if t else 'triton-windows')"
+        if ($LASTEXITCODE -ne 0 -or -not $tritonSpec) { $tritonSpec = "triton-windows" }
+        Write-Host "Triton-Version: $tritonSpec"
+        & $uv pip install --python $VenvPy $tritonSpec
+        if ($LASTEXITCODE -eq 0) {
+            $env:TORCHINDUCTOR_CACHE_DIR = Join-Path $AppDir "cache\inductor"
+            $env:TRITON_CACHE_DIR = Join-Path $AppDir "cache\triton"
+            & $VenvPy -c "import torch; f = torch.compile(lambda x: torch.sin(x) * 2 + 1); y = f(torch.ones(64, device='cuda')); torch.cuda.synchronize(); print('torch.compile OK', round(float(y.sum()), 2))"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "torch.compile funktioniert auf diesem System nicht - Beschleunigung wird deaktiviert (VoiceClone laeuft trotzdem)." -ForegroundColor Yellow
+                & $uv pip uninstall --python $VenvPy triton-windows
+            }
+        } else {
+            Write-Host "Triton konnte nicht installiert werden - VoiceClone laeuft ohne Beschleunigung." -ForegroundColor Yellow
+        }
+    }
+
     Step "Pruefe Installation"
     & $VenvPy -c "import torch, voxcpm, fastapi, webview, sounddevice; print('PyTorch', torch.__version__, '| CUDA:', torch.cuda.is_available())"
     if ($LASTEXITCODE -ne 0) { throw "Pruefung fehlgeschlagen - siehe install.log" }

@@ -131,6 +131,7 @@
           </div>
           <div class="result hidden" id="resultBox">
             <div class="player" id="mainPlayer"></div>
+            <div class="result-stats" id="resultStats"></div>
             <p class="result-text" id="resultText"></p>
             <div class="result-actions">
               <button class="btn" id="btnSave"><span data-icon="download"></span>Speichern unter …</button>
@@ -288,10 +289,14 @@
             <div><div class="sr-title">Entrauscher laden</div><div class="sr-sub">Verbessert verrauschte Referenzen (benötigt Neustart).</div></div>
             <input type="checkbox" class="switch" id="setDenoiser">
           </label>
-          <label class="set-row">
-            <div><div class="sr-title">Beschleunigung (torch.compile)</div><div class="sr-sub">Nur Linux + NVIDIA, unter Windows meist nicht verfügbar.</div></div>
-            <input type="checkbox" class="switch" id="setOptimize">
-          </label>
+          <div class="set-row">
+            <div><div class="sr-title">Beschleunigung</div><div class="sr-sub">torch.compile + CUDA-Graphs für NVIDIA-Grafikkarten. Der erste Start dauert einmalig 1–3 Minuten länger, danach ist die Sprachausgabe deutlich schneller. Fällt bei Problemen automatisch zurück.</div></div>
+            <select id="setAccel">
+              <option value="auto">Automatisch (empfohlen)</option>
+              <option value="off">Aus</option>
+            </select>
+          </div>
+          <div class="hw-box" id="hwBox"></div>
           <div class="restart-note hidden" id="restartNote"><span data-icon="info"></span>Änderungen am Modell werden nach einem Neustart des Programms wirksam.</div>
         </div>
 

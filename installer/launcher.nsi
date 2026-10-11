@@ -19,10 +19,10 @@ Var PSEXE
     StrCpy $PSEXE "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
   ${EndIf}
 !macroend
-VIProductVersion "2.2.1.0"
+VIProductVersion "2.3.0.0"
 VIAddVersionKey "ProductName" "VoiceClone v2"
 VIAddVersionKey "FileDescription" "VoiceClone v2 - Stimmen klonen mit VoxCPM2"
-VIAddVersionKey "FileVersion" "2.2.1"
+VIAddVersionKey "FileVersion" "2.3.0"
 VIAddVersionKey "LegalCopyright" "Apache-2.0 (VoxCPM2: OpenBMB)"
 
 Section

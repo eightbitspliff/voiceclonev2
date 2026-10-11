@@ -39,7 +39,7 @@ DEFAULT_SETTINGS = {
     "auto_transcript": True,
     "normalize": False,
     "load_denoiser": False,
-    "optimize": False,
+    "accel": "auto",            # auto | off  (torch.compile + CUDA Graphs)
     "input_device": None,
     "asr_language": "auto",     # Sprache für die automatische Transkription
     "export_format": "wav",     # wav | mp3 | ogg | mp4
@@ -443,17 +443,51 @@ class EngineStatus:
     extra: dict = field(default_factory=dict)
 
 
+def hardware_info() -> dict:
+    """Erkennt Grafikkarte, Grafikspeicher und Beschleunigungsmöglichkeiten."""
+    info = {"cuda": False, "gpu": "", "vram_gb": 0.0, "compute": "", "bf16": False, "triton": False}
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            info.update(cuda=True, gpu=props.name, vram_gb=round(props.total_memory / 1024 ** 3, 1),
+                        compute=f"{props.major}.{props.minor}", bf16=torch.cuda.is_bf16_supported())
+        try:
+            import triton  # noqa: F401
+
+            info["triton"] = True
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return info
+
+
+def _tune_torch() -> None:
+    """Globale PyTorch-Einstellungen für NVIDIA-Grafikkarten (Ampere und neuer)."""
+    import torch
+
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        torch.set_float32_matmul_precision("high")
+
+
 class Engine:
     def __init__(self, model_id: str = "openbmb/VoxCPM2", device: str | None = None,
-                 optimize: bool = False, load_denoiser: bool = False):
+                 accel: str = "auto", load_denoiser: bool = False):
         self.model_id = model_id
         self.device = None if device in (None, "", "auto") else device
-        self.optimize = optimize
+        self.accel = accel                 # auto | off
         self.load_denoiser = load_denoiser
+        self.compiled = False              # torch.compile + CUDA Graphs aktiv?
         self._model = None
-        self._asr = None
         self._lock = threading.Lock()
         self._gen_lock = threading.Lock()
+        self._prompt_cache_key = None
+        self._prompt_cache = None
         self.status = EngineStatus()
 
     def load_async(self) -> None:
@@ -466,27 +500,84 @@ class Engine:
             pass
 
     # ---- TTS ----
+    def _want_compile(self) -> bool:
+        if self.accel == "off" or (self.device and not self.device.startswith("cuda")):
+            return False
+        hw = hardware_info()
+        return hw["cuda"] and hw["triton"]
+
+    def _load(self, compile_: bool):
+        from voxcpm import VoxCPM
+
+        return VoxCPM.from_pretrained(self.model_id, load_denoiser=self.load_denoiser,
+                                      optimize=compile_, device=self.device)
+
     @property
     def model(self):
         if self._model is None:
             with self._lock:
                 if self._model is None:
-                    self.status = EngineStatus("loading", "Lade VoxCPM2 … (beim ersten Start wird das Modell heruntergeladen, ca. 5 GB)")
-                    try:
-                        from voxcpm import VoxCPM
-
-                        model = VoxCPM.from_pretrained(
-                            self.model_id,
-                            load_denoiser=self.load_denoiser,
-                            optimize=self.optimize,
-                            device=self.device,
-                        )
-                    except Exception as exc:
-                        self.status = EngineStatus("error", f"Modell konnte nicht geladen werden: {exc}")
-                        raise
-                    self._model = model
-                    self.status = EngineStatus("ready", "Bereit", *self._device_info(model))
+                    self._model = self._load_with_fallback()
         return self._model
+
+    def _load_with_fallback(self):
+        compile_ = self._want_compile()
+        msg = "Lade VoxCPM2 … (beim ersten Start wird das Modell heruntergeladen, ca. 5 GB)"
+        if compile_:
+            msg += " – Beschleunigung wird vorbereitet (einmalig 1–3 Minuten)"
+        self.status = EngineStatus("loading", msg)
+        try:
+            _tune_torch()
+            try:
+                model = self._load(compile_)
+                self.compiled = compile_
+            except Exception as exc:
+                if not compile_:
+                    raise
+                print(f"[WARN] Beschleunigung (torch.compile) fehlgeschlagen, lade ohne: {exc}")
+                self._free_gpu()
+                model = self._load(False)
+                self.compiled = False
+            self._warmup(model)
+        except Exception as exc:
+            self.status = EngineStatus("error", f"Modell konnte nicht geladen werden: {exc}")
+            raise
+        dev, gpu = self._device_info(model)
+        self.status = EngineStatus("ready", "Bereit", dev, gpu, {
+            "compiled": self.compiled, "dtype": getattr(model.tts_model.config, "dtype", ""),
+            **{k: v for k, v in hardware_info().items() if k in ("vram_gb", "compute", "triton")},
+        })
+        return model
+
+    @staticmethod
+    def _free_gpu() -> None:
+        import gc
+
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _warmup(model) -> None:
+        """Kurzer Probelauf, damit die erste echte Anfrage nicht auf CUDA-Initialisierung wartet."""
+        try:
+            model.tts_model.generate(target_text="Hallo.", max_len=8)
+        except Exception as exc:
+            print(f"[WARN] Aufwärmen übersprungen: {exc}")
+
+    def _disable_compile(self) -> None:
+        """Lädt das Modell ohne torch.compile neu (Rückfall bei Laufzeitfehlern)."""
+        with self._lock:
+            self._model = None
+            self._prompt_cache_key = self._prompt_cache = None
+            self._free_gpu()
+            self.accel = "off"
+            self._model = self._load_with_fallback()
 
     @staticmethod
     def _device_info(model) -> tuple[str, str]:
@@ -503,6 +594,34 @@ class Engine:
     def sample_rate(self) -> int:
         return self.model.tts_model.sample_rate
 
+    def _get_prompt_cache(self, model, profile: VoiceProfile | None, ultimate: bool):
+        """Referenz nur einmal kodieren und für alle Sätze (und Folgeanfragen) wiederverwenden."""
+        if profile is None:
+            return None
+        ref = str(profile.wav_path)
+        key = (ref, profile.wav_path.stat().st_mtime, ultimate, profile.transcript if ultimate else "")
+        if key != self._prompt_cache_key:
+            self._prompt_cache = model.tts_model.build_prompt_cache(
+                prompt_text=profile.transcript if ultimate else None,
+                prompt_wav_path=ref if ultimate else None,
+                reference_wav_path=ref,
+            )
+            self._prompt_cache_key = key
+        return self._prompt_cache
+
+    def _generate_chunk(self, model, text: str, cache, cfg_value: float, steps: int) -> np.ndarray:
+        gen = model.tts_model._generate_with_prompt_cache(
+            target_text=text, prompt_cache=cache, min_len=2, max_len=4096,
+            inference_timesteps=steps, cfg_value=cfg_value,
+            retry_badcase=True, retry_badcase_max_times=3, retry_badcase_ratio_threshold=6.0,
+            streaming=False,
+        )
+        try:
+            wav, _, _ = next(gen)
+        finally:
+            gen.close()
+        return wav.squeeze(0).float().cpu().numpy()
+
     def synthesize(self, text: str, profile: VoiceProfile | None, style: str = "",
                    use_transcript: bool = True, cfg_value: float = 2.0,
                    inference_timesteps: int = 10, normalize: bool = False,
@@ -511,39 +630,57 @@ class Engine:
         chunks = split_text(text)
         if not chunks:
             raise ValueError("Bitte einen Text eingeben.")
-
-        kwargs: dict = dict(
-            cfg_value=float(cfg_value),
-            inference_timesteps=int(inference_timesteps),
-            normalize=normalize,
-            denoise=denoise and self.load_denoiser,
-        )
-        ultimate = False
-        if profile is not None:
-            ref = str(profile.wav_path)
-            kwargs["reference_wav_path"] = ref
-            if use_transcript and profile.transcript_trusted:
-                # "Ultimate Cloning": Referenz + Transkript als Fortsetzungs-Prompt
-                kwargs["prompt_wav_path"] = ref
-                kwargs["prompt_text"] = profile.transcript
-                ultimate = True
-
+        ultimate = bool(profile is not None and use_transcript and profile.transcript_trusted)
         style = style.strip().strip("()")
         prefix = f"({style})" if style and not ultimate else ""
 
         if progress:
             progress(0.0, "Lade Modell …" if self._model is None else "Starte …")
+        try:
+            return self._synthesize(chunks, profile, prefix, ultimate, float(cfg_value),
+                                    int(inference_timesteps), normalize, denoise, progress, cancel)
+        except Cancelled:
+            raise
+        except Exception as exc:
+            if not self.compiled:
+                raise
+            # torch.compile kann auf manchen Systemen erst zur Laufzeit scheitern -> ohne wiederholen
+            print(f"[WARN] Fehler mit Beschleunigung, wiederhole ohne torch.compile: {exc}")
+            if progress:
+                progress(0.0, "Beschleunigung nicht nutzbar – lade Modell ohne neu …")
+            self._disable_compile()
+            return self._synthesize(chunks, profile, prefix, ultimate, float(cfg_value),
+                                    int(inference_timesteps), normalize, denoise, progress, cancel)
+
+    def _synthesize(self, chunks, profile, prefix, ultimate, cfg_value, steps, normalize, denoise,
+                    progress, cancel) -> tuple[int, np.ndarray]:
         model = self.model
         sr = self.sample_rate
         pause = np.zeros(int(0.2 * sr), dtype=np.float32)
         out: list[np.ndarray] = []
+        fast_path = not (denoise and self.load_denoiser)
+        normalizer = None
+        if normalize:
+            from voxcpm.utils.text_normalize import TextNormalizer
+
+            normalizer = TextNormalizer()
         with self._gen_lock:
+            cache = self._get_prompt_cache(model, profile, ultimate) if fast_path else None
             for i, chunk in enumerate(chunks):
                 if cancel is not None and cancel.is_set():
                     raise Cancelled()
                 if progress:
                     progress(i / len(chunks), f"Erzeuge Abschnitt {i + 1} von {len(chunks)}")
-                wav = model.generate(text=prefix + chunk, **kwargs)
+                if fast_path:
+                    t = normalizer.normalize(chunk) if normalizer else chunk
+                    wav = self._generate_chunk(model, prefix + t, cache, cfg_value, steps)
+                else:  # Entrauschen der Referenz -> offizieller (langsamerer) Weg
+                    kwargs = dict(cfg_value=cfg_value, inference_timesteps=steps, normalize=normalize, denoise=True)
+                    if profile is not None:
+                        kwargs["reference_wav_path"] = str(profile.wav_path)
+                        if ultimate:
+                            kwargs.update(prompt_wav_path=str(profile.wav_path), prompt_text=profile.transcript)
+                    wav = model.generate(text=prefix + chunk, **kwargs)
                 if out:
                     out.append(pause)
                 out.append(np.asarray(wav, dtype=np.float32))

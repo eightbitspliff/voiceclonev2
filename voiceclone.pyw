@@ -19,6 +19,14 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 os.chdir(BASE)
+
+# Kompilierte Kernel (torch.compile/Triton) dauerhaft im Programmordner speichern,
+# damit die Beschleunigung nur beim allerersten Start vorbereitet werden muss.
+_cache = BASE / "cache"
+os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", str(_cache / "inductor"))
+os.environ.setdefault("TRITON_CACHE_DIR", str(_cache / "triton"))
+os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
+os.environ.setdefault("TORCHINDUCTOR_AUTOGRAD_CACHE", "1")
 sys.path.insert(0, str(BASE))
 
 # Unter pythonw.exe gibt es keine Konsole -> Ausgaben in eine Logdatei umleiten.

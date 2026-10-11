@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -21,12 +22,12 @@ from pydantic import BaseModel
 import voice_engine as ve
 
 STATIC_DIR = ve.BASE_DIR / "ui"
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.3.0"
 
 app = FastAPI(title="VoiceClone v2")
 settings = ve.load_settings()
 engine = ve.Engine(settings["model"], device=settings["device"],
-                   optimize=settings["optimize"], load_denoiser=settings["load_denoiser"])
+                   accel=settings.get("accel", "auto"), load_denoiser=settings["load_denoiser"])
 recorder = ve.Recorder()
 window = None  # wird von voiceclone.pyw gesetzt (pywebview-Fenster)
 
@@ -103,7 +104,9 @@ def cancel_job(job_id: str):
 def status():
     s = engine.status
     return {"state": s.state, "message": s.message, "device": s.device, "gpu": s.gpu,
-            "version": APP_VERSION, "desktop": window is not None}
+            "version": APP_VERSION, "desktop": window is not None, "compiled": engine.compiled,
+            "dtype": s.extra.get("dtype", ""), "vram_gb": s.extra.get("vram_gb", 0),
+            "triton": s.extra.get("triton", False)}
 
 
 @app.post("/api/model/load")
@@ -123,7 +126,7 @@ def put_settings(values: dict):
     global settings
     old = settings
     settings = ve.save_settings(values)
-    restart_keys = ("device", "model", "load_denoiser", "optimize")
+    restart_keys = ("device", "model", "load_denoiser", "accel")
     needs_restart = any(old.get(k) != settings.get(k) for k in restart_keys)
     return {"settings": settings, "restart_required": needs_restart}
 
@@ -311,6 +314,7 @@ def generate(body: GenerateIn):
             raise HTTPException(404, f"Stimme „{body.voice}“ nicht gefunden.")
 
     def work(job: Job):
+        t0 = time.perf_counter()
         sr, audio = engine.synthesize(
             body.text, profile, style=body.style, use_transcript=body.use_transcript,
             cfg_value=body.cfg_value if body.cfg_value is not None else settings["cfg_value"],
@@ -318,7 +322,10 @@ def generate(body: GenerateIn):
             normalize=body.normalize if body.normalize is not None else settings["normalize"],
             progress=job.update, cancel=job.cancel,
         )
+        elapsed = time.perf_counter() - t0
         meta = ve.save_output(sr, audio, profile.name if profile else None, body.text, body.style)
+        meta["gen_seconds"] = round(elapsed, 2)
+        meta["rtf"] = round(elapsed / max(meta["duration"], 0.01), 2)
         meta["peaks"] = ve.waveform_peaks(ve.output_path(meta["file"]), 160)
         return meta
 

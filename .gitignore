@@ -12,3 +12,4 @@ webview_data/
 recordings/
 settings.json
 voiceclone.log
+cache/

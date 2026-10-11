@@ -1,4 +1,4 @@
-voxcpm>=2.0.3
+voxcpm==2.0.3
 librosa
 soundfile
 numpy

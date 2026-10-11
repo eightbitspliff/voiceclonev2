@@ -209,7 +209,9 @@ async function refreshStatus() {
     const titles = { idle: "Modell nicht geladen", loading: "Modell lädt …", ready: "Modell bereit", error: "Modellfehler" };
     $("#msTitle").textContent = titles[s.state] || "Modell";
     const dev = s.gpu ? s.gpu : s.device ? (s.device.startsWith("cuda") ? "Grafikkarte" : s.device.toUpperCase()) : "";
-    $("#msSub").textContent = s.state === "ready" ? `VoxCPM2 · ${dev || "bereit"}` : s.state === "loading" ? "Erster Start: Download ca. 5 GB" : s.message;
+    $("#msSub").textContent = s.state === "ready" ? `VoxCPM2 · ${dev || "bereit"}${s.compiled ? " · ⚡ beschleunigt" : ""}`
+      : s.state === "loading" ? "Erster Start: Download ca. 5 GB" : s.message;
+    renderHardware(s);
     el.title = s.message;
     $("#infoVersion").textContent = `VoiceClone ${s.version} · VoxCPM2`;
     $("#infoDevice").textContent = s.state === "ready" ? `Läuft auf: ${s.gpu || s.device}` : titles[s.state];
@@ -546,12 +548,27 @@ async function speak() {
   }
 }
 let resultPlayer = null;
+function renderHardware(s) {
+  const box = $("#hwBox");
+  if (!box) return;
+  if (s.state !== "ready") { box.innerHTML = `<span class="muted">${esc(s.state === "loading" ? "Modell lädt …" : "Modell nicht geladen")}</span>`; return; }
+  const rows = [
+    ["Gerät", s.gpu || (s.device || "").toUpperCase()],
+    ["Grafikspeicher", s.vram_gb ? `${s.vram_gb} GB` : "–"],
+    ["Rechengenauigkeit", s.dtype || "–"],
+    ["Beschleunigung", s.compiled ? "⚡ aktiv (torch.compile + CUDA-Graphs)" : s.triton ? "aus" : "nicht verfügbar (Triton fehlt)"],
+  ];
+  box.innerHTML = rows.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
+}
 function showResult(r) {
   lastResult = r;
   $("#resultBox").classList.remove("hidden");
   $("#resultEmpty").classList.add("hidden");
   resultPlayer = new Player($("#mainPlayer"), `/api/history/${encodeURIComponent(r.file)}/audio`, r.peaks, { duration: r.duration });
   $("#resultText").textContent = r.text;
+  $("#resultStats").innerHTML = r.gen_seconds
+    ? `<span>${r.duration.toFixed(1)} s Audio</span><span>erzeugt in ${r.gen_seconds.toFixed(1)} s</span><span class="${r.rtf <= 1 ? "good" : ""}">${r.rtf <= 1 ? `${(1 / r.rtf).toFixed(1)}× schneller als Echtzeit` : `${r.rtf.toFixed(1)}× Echtzeit`}</span>`
+    : "";
 }
 $("#btnSpeak").addEventListener("click", speak);
 $("#btnCancel").addEventListener("click", () => currentJob && api(`/api/jobs/${currentJob.id}/cancel`, { method: "POST" }));
@@ -648,7 +665,7 @@ async function loadSettings() {
   $("#setCfg").value = settings.cfg_value; $("#setCfgVal").textContent = (+settings.cfg_value).toFixed(1);
   $("#setNormalize").checked = !!settings.normalize;
   $("#setDenoiser").checked = !!settings.load_denoiser;
-  $("#setOptimize").checked = !!settings.optimize;
+  $("#setAccel").value = settings.accel || "auto";
   // Standardwerte für die Sprechen-Seite
   $("#ttsSteps").value = settings.inference_timesteps; $("#ttsStepsVal").textContent = settings.inference_timesteps;
   $("#ttsCfg").value = settings.cfg_value; $("#ttsCfgVal").textContent = (+settings.cfg_value).toFixed(1);
@@ -671,7 +688,7 @@ $("#setCfg").addEventListener("input", (e) => { $("#setCfgVal").textContent = (+
 $("#setCfg").addEventListener("change", (e) => { saveSetting({ cfg_value: +e.target.value }); $("#ttsCfg").value = e.target.value; $("#ttsCfgVal").textContent = (+e.target.value).toFixed(1); });
 $("#setNormalize").addEventListener("change", (e) => saveSetting({ normalize: e.target.checked }));
 $("#setDenoiser").addEventListener("change", (e) => saveSetting({ load_denoiser: e.target.checked }));
-$("#setOptimize").addEventListener("change", (e) => saveSetting({ optimize: e.target.checked }));
+$("#setAccel").addEventListener("change", (e) => saveSetting({ accel: e.target.value }));
 $("#maxSeconds").addEventListener("change", (e) => saveSetting({ max_ref_seconds: +e.target.value }));
 $("#autoTranscript").addEventListener("change", (e) => saveSetting({ auto_transcript: e.target.checked }));
 $("#setAsrLang").addEventListener("change", (e) => saveSetting({ asr_language: e.target.value }));

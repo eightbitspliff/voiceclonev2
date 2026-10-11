@@ -30,6 +30,10 @@ außerdem in `install.log` und `voiceclone.log` im Installationsordner (`%LOCALA
   Fortschritt mit Abbrechen, Wiedergabe mit Wellenform, *Speichern unter …* als **WAV, MP3, OGG oder MP4**
 - **Verlauf** aller Ausgaben mit Suche, Wiedergabe, Text wiederverwenden, Löschen
 - **Einstellungen**: Farbschema, Rechengerät (GPU/CPU), Qualität, Mikrofon, Speicherorte
+- **Hardware-Optimierung** für NVIDIA-Grafikkarten: bfloat16, TF32, `torch.compile` mit CUDA-Graphs
+  (über triton-windows, automatisch passend zur PyTorch-Version), dauerhafter Kernel-Cache,
+  Referenz wird nur einmal kodiert und wiederverwendet, Aufwärmlauf nach dem Laden –
+  mit automatischem Rückfall, falls die Beschleunigung auf einem System nicht funktioniert
 - Lange Texte werden automatisch in Sätze aufgeteilt; Ausgabe in 48 kHz (intern verlustfrei als WAV)
 
 ## Voraussetzungen

@@ -482,3 +482,12 @@ label.set-row { cursor: pointer; }
 .format-opt:has(input:checked) .fo-name { color: var(--accent); }
 .fo-sub { font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 @media (max-width: 600px) { .format-grid { grid-template-columns: 1fr 1fr; } }
+
+/* Hardware-Info & Ergebnis-Statistik */
+.hw-box { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; padding: 12px 14px; margin-top: 6px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); font-size: 12.5px; }
+.hw-box div { display: flex; justify-content: space-between; gap: 12px; }
+.hw-box span { color: var(--text-3); }
+.hw-box b { font-weight: 600; text-align: right; }
+.result-stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.result-stats span { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
+.result-stats span.good { color: var(--success); border-color: rgba(47, 182, 124, .35); background: rgba(47, 182, 124, .1); }
