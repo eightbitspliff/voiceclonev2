@@ -27,10 +27,10 @@ außerdem in `install.log` und `voiceclone.log` im Installationsordner (`%LOCALA
 - **Automatisches Transkript** (Whisper, auch Deutsch) für maximale Ähnlichkeit („Ultimate Cloning“),
   jederzeit bearbeitbar
 - **Sprechen**: Stimme wählen, Text eingeben, optional Stil-Anweisung (Vorschläge per Klick),
-  Fortschritt mit Abbrechen, Wiedergabe mit Wellenform, *Speichern unter …*
+  Fortschritt mit Abbrechen, Wiedergabe mit Wellenform, *Speichern unter …* als **WAV, MP3, OGG oder MP4**
 - **Verlauf** aller Ausgaben mit Suche, Wiedergabe, Text wiederverwenden, Löschen
 - **Einstellungen**: Farbschema, Rechengerät (GPU/CPU), Qualität, Mikrofon, Speicherorte
-- Lange Texte werden automatisch in Sätze aufgeteilt; Ausgabe als 48-kHz-WAV
+- Lange Texte werden automatisch in Sätze aufgeteilt; Ausgabe in 48 kHz (intern verlustfrei als WAV)
 
 ## Voraussetzungen
 

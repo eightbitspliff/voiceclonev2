@@ -556,11 +556,28 @@ function showResult(r) {
 $("#btnSpeak").addEventListener("click", speak);
 $("#btnCancel").addEventListener("click", () => currentJob && api(`/api/jobs/${currentJob.id}/cancel`, { method: "POST" }));
 
+function chooseFormat() {
+  const dlg = $("#exportDialog");
+  const current = settings.export_format || "wav";
+  $$('#formatGrid input[name="fmt"]').forEach((r) => { r.checked = r.value === current; });
+  dlg.returnValue = "";
+  dlg.showModal();
+  return new Promise((resolve) => dlg.addEventListener("close", () => {
+    const sel = $('#formatGrid input[name="fmt"]:checked');
+    resolve(dlg.returnValue === "save" && sel ? sel.value : null);
+  }, { once: true }));
+}
 async function saveAs(file) {
+  const fmt = await chooseFormat();
+  if (!fmt) return;
+  if (fmt !== settings.export_format) { saveSetting({ export_format: fmt }); $("#setExportFormat").value = fmt; }
   try {
-    const r = await api(`/api/history/${encodeURIComponent(file)}/save-as`, { method: "POST" });
+    const r = await api(`/api/history/${encodeURIComponent(file)}/save-as`, { method: "POST", body: { format: fmt } });
     if (r.ok) toast(`Gespeichert: ${r.path}`, "success");
-    else if (r.download) { const a = document.createElement("a"); a.href = r.download; a.download = file; a.click(); }
+    else if (r.download) {
+      const a = document.createElement("a");
+      a.href = r.download; a.download = file.replace(/\.wav$/i, `.${fmt}`); a.click();
+    }
   } catch (e) { toast(e.message, "error"); }
 }
 const reveal = (file) => api(`/api/history/${encodeURIComponent(file)}/reveal`, { method: "POST" }).catch((e) => toast(e.message, "error"));
@@ -638,6 +655,7 @@ async function loadSettings() {
   $("#maxSeconds").value = settings.max_ref_seconds; $("#maxSecondsVal").textContent = `${settings.max_ref_seconds} s`;
   $("#autoTranscript").checked = settings.auto_transcript !== false;
   $("#setAsrLang").value = settings.asr_language || "auto";
+  $("#setExportFormat").value = settings.export_format || "wav";
 }
 async function saveSetting(values) {
   try {
@@ -657,6 +675,7 @@ $("#setOptimize").addEventListener("change", (e) => saveSetting({ optimize: e.ta
 $("#maxSeconds").addEventListener("change", (e) => saveSetting({ max_ref_seconds: +e.target.value }));
 $("#autoTranscript").addEventListener("change", (e) => saveSetting({ auto_transcript: e.target.checked }));
 $("#setAsrLang").addEventListener("change", (e) => saveSetting({ asr_language: e.target.value }));
+$("#setExportFormat").addEventListener("change", (e) => saveSetting({ export_format: e.target.value }));
 $("#setInput").addEventListener("change", (e) => saveSetting({ input_device: e.target.value === "" ? null : +e.target.value }));
 
 async function loadDevices() {

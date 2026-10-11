@@ -42,6 +42,7 @@ DEFAULT_SETTINGS = {
     "optimize": False,
     "input_device": None,
     "asr_language": "auto",     # Sprache für die automatische Transkription
+    "export_format": "wav",     # wav | mp3 | ogg | mp4
 }
 
 # Mehrsprachige Spracherkennung (Whisper) für das Referenz-Transkript.
@@ -71,18 +72,50 @@ def save_settings(values: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # Audio-Aufbereitung
 # --------------------------------------------------------------------------- #
-def _ffmpeg_to_wav(path: str) -> str:
-    """Konvertiert Formate, die soundfile nicht lesen kann (z. B. M4A/AAC), per FFmpeg."""
+def _ffmpeg_exe() -> str:
     try:
         import imageio_ffmpeg
 
-        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
-        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
-    out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+        return shutil.which("ffmpeg") or "ffmpeg"
+
+
+def _run_ffmpeg(args: list[str]) -> None:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", path, "-ac", "1",
-                    "-ar", str(REF_SAMPLE_RATE), out], check=True, creationflags=flags)
+    proc = subprocess.run([_ffmpeg_exe(), "-y", "-loglevel", "error", *args],
+                          capture_output=True, text=True, creationflags=flags)
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg-Fehler: {proc.stderr.strip() or proc.returncode}")
+
+
+def _ffmpeg_to_wav(path: str) -> str:
+    """Konvertiert Formate, die soundfile nicht lesen kann (z. B. M4A/AAC), per FFmpeg."""
+    out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+    _run_ffmpeg(["-i", path, "-ac", "1", "-ar", str(REF_SAMPLE_RATE), out])
+    return out
+
+
+# Speicherformate für erzeugte Audios (intern wird immer verlustfrei als WAV gespeichert)
+EXPORT_FORMATS = {
+    "wav": {"ext": ".wav", "label": "WAV-Audio", "args": None},
+    "mp3": {"ext": ".mp3", "label": "MP3-Audio", "args": ["-c:a", "libmp3lame", "-b:a", "192k"]},
+    "ogg": {"ext": ".ogg", "label": "OGG-Vorbis-Audio", "args": ["-c:a", "libvorbis", "-q:a", "6"]},
+    "mp4": {"ext": ".mp4", "label": "MP4-Audio (AAC)", "args": ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]},
+}
+
+
+def export_audio(wav_path: Path, fmt: str, title: str = "") -> Path:
+    """Wandelt eine erzeugte WAV-Datei in das gewünschte Format um (temporäre Datei)."""
+    spec = EXPORT_FORMATS.get(fmt)
+    if spec is None:
+        raise ValueError(f"Unbekanntes Format: {fmt}")
+    out = Path(tempfile.mkdtemp(prefix="vc_export_")) / (wav_path.stem + spec["ext"])
+    if spec["args"] is None:
+        shutil.copy(wav_path, out)
+        return out
+    meta = ["-metadata", f"title={title[:120]}", "-metadata", "artist=VoiceClone v2"] if title else []
+    _run_ffmpeg(["-i", str(wav_path), "-vn", *spec["args"], *meta, str(out)])
     return out
 
 

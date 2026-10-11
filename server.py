@@ -14,12 +14,13 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 import voice_engine as ve
 
 STATIC_DIR = ve.BASE_DIR / "ui"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 
 app = FastAPI(title="VoiceClone v2")
 settings = ve.load_settings()
@@ -382,22 +383,51 @@ def open_folder(which: str):
     return {"ok": True}
 
 
-@app.post("/api/history/{file}/save-as")
-def history_save_as(file: str):
+class SaveAsIn(BaseModel):
+    format: str = "wav"
+
+
+def _export(file: str, fmt: str) -> Path:
     path = ve.output_path(file)
     if not path:
-        raise HTTPException(404)
-    if window is None:
-        return {"ok": False, "download": f"/api/history/{file}/audio"}
+        raise HTTPException(404, "Datei nicht gefunden")
+    if fmt not in ve.EXPORT_FORMATS:
+        raise HTTPException(400, f"Unbekanntes Format: {fmt}")
+    meta = next((m for m in ve.list_outputs() if m["file"] == path.name), {})
+    return ve.export_audio(path, fmt, meta.get("text", ""))
+
+
+@app.get("/api/history/{file}/export")
+def history_export(file: str, format: str = "wav"):
+    out = _export(file, format)
+    cleanup = BackgroundTask(shutil.rmtree, out.parent, ignore_errors=True)
+    return FileResponse(out, filename=out.name, background=cleanup)
+
+
+@app.post("/api/history/{file}/save-as")
+def history_save_as(file: str, body: SaveAsIn | None = None):
+    fmt = (body.format if body else "wav").lower()
+    if window is None:  # Browser-Modus: normaler Download
+        _export(file, fmt)  # prüft Datei/Format vorab
+        return {"ok": False, "download": f"/api/history/{file}/export?format={fmt}"}
     import webview
 
+    spec = ve.EXPORT_FORMATS.get(fmt)
+    if spec is None:
+        raise HTTPException(400, f"Unbekanntes Format: {fmt}")
     save_mode = getattr(getattr(webview, "FileDialog", None), "SAVE", None) or webview.SAVE_DIALOG
-    target = window.create_file_dialog(save_mode, save_filename=path.name,
-                                       file_types=("WAV-Audio (*.wav)",))
+    target = window.create_file_dialog(save_mode, save_filename=Path(file).stem + spec["ext"],
+                                       file_types=(f"{spec['label']} (*{spec['ext']})",))
     if not target:
         return {"ok": False, "cancelled": True}
-    target = target[0] if isinstance(target, (list, tuple)) else target
-    shutil.copy(path, target)
+    target = Path(target[0] if isinstance(target, (list, tuple)) else target)
+    if target.suffix.lower() != spec["ext"]:
+        target = target.with_suffix(spec["ext"])
+    out = _export(file, fmt)
+    try:
+        shutil.copy(out, target)
+    finally:
+        shutil.rmtree(out.parent, ignore_errors=True)
     return {"ok": True, "path": str(target)}
 
 

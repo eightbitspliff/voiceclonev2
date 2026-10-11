@@ -321,6 +321,15 @@
         <div class="card">
           <div class="card-title"><span>Dateien & Info</span></div>
           <div class="set-row">
+            <div><div class="sr-title">Standard-Speicherformat</div><div class="sr-sub">Vorauswahl bei „Speichern unter …“.</div></div>
+            <select id="setExportFormat">
+              <option value="wav">WAV (verlustfrei)</option>
+              <option value="mp3">MP3</option>
+              <option value="ogg">OGG (Vorbis)</option>
+              <option value="mp4">MP4 (AAC)</option>
+            </select>
+          </div>
+          <div class="set-row">
             <div><div class="sr-title">Speicherorte</div><div class="sr-sub">Erzeugte Audios und gespeicherte Stimmen.</div></div>
             <div class="btn-row">
               <button class="btn ghost" data-folder="outputs"><span data-icon="folder"></span>Ausgaben</button>
@@ -350,6 +359,25 @@
       <span class="spacer"></span>
       <button class="btn ghost" value="cancel">Abbrechen</button>
       <button class="btn primary" value="save">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Speichern-als-Dialog -->
+<dialog id="exportDialog" class="dialog">
+  <form method="dialog">
+    <h3>Speichern als …</h3>
+    <p class="muted">In welchem Format soll die Sprachausgabe gespeichert werden?</p>
+    <div class="format-grid" id="formatGrid">
+      <label class="format-opt"><input type="radio" name="fmt" value="wav"><span class="fo-name">WAV</span><span class="fo-sub">Verlustfrei · 48 kHz<br>beste Qualität, groß</span></label>
+      <label class="format-opt"><input type="radio" name="fmt" value="mp3"><span class="fo-name">MP3</span><span class="fo-sub">192 kbit/s<br>läuft überall</span></label>
+      <label class="format-opt"><input type="radio" name="fmt" value="ogg"><span class="fo-name">OGG</span><span class="fo-sub">Vorbis · hohe Qualität<br>klein, frei</span></label>
+      <label class="format-opt"><input type="radio" name="fmt" value="mp4"><span class="fo-name">MP4</span><span class="fo-sub">AAC 192 kbit/s<br>für Video &amp; Handy</span></label>
+    </div>
+    <div class="dialog-actions">
+      <span class="spacer"></span>
+      <button class="btn ghost" value="cancel">Abbrechen</button>
+      <button class="btn primary" value="save"><span data-icon="download"></span>Speichern</button>
     </div>
   </form>
 </dialog>

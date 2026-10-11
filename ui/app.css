@@ -466,3 +466,19 @@ label.set-row { cursor: pointer; }
 /* Deaktivierter Schalter wirkt immer "aus" */
 .switch-row.disabled .switch { background: var(--surface-3); border-color: var(--border-strong); }
 .switch-row.disabled .switch::after { transform: none; }
+
+/* Formatauswahl */
+.format-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 4px 0 6px; }
+.format-opt {
+  position: relative; display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+  padding: 14px 12px; border-radius: 12px; border: 1.5px solid var(--border); background: var(--surface-2);
+  transition: border-color .15s, background .15s;
+}
+.format-opt:hover { border-color: var(--border-strong); }
+.format-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.format-opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.format-opt:has(input:focus-visible) { box-shadow: 0 0 0 3px var(--accent-soft); }
+.fo-name { font-weight: 700; font-size: 16px; }
+.format-opt:has(input:checked) .fo-name { color: var(--accent); }
+.fo-sub { font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
+@media (max-width: 600px) { .format-grid { grid-template-columns: 1fr 1fr; } }
