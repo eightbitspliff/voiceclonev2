@@ -13,3 +13,6 @@ recordings/
 settings.json
 voiceclone.log
 cache/
+.venv-qwen/
+install_qwen.log
+qwen_worker.log

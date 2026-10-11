@@ -491,3 +491,9 @@ label.set-row { cursor: pointer; }
 .result-stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .result-stats span { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
 .result-stats span.good { color: var(--success); border-color: rgba(47, 182, 124, .35); background: rgba(47, 182, 124, .1); }
+
+/* Modellwahl (VoxCPM2 / Qwen3-TTS) */
+.engine-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin: 2px 0 16px; }
+.engine-label { font-weight: 600; font-size: 13px; }
+.engine-row .hint { flex: 1 1 200px; }
+.engine-row .hint.warn { color: var(--danger, #e5484d); }

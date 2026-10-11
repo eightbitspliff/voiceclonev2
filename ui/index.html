@@ -67,6 +67,15 @@
           </div>
           <div class="voice-picker" id="voicePicker"></div>
 
+          <div class="engine-row">
+            <span class="engine-label">Sprachmodell</span>
+            <div class="segmented" id="engineSeg">
+              <button data-value="voxcpm" title="VoxCPM2 · 2B · 48 kHz · Stil-Anweisungen">VoxCPM2</button>
+              <button data-value="qwen" title="Qwen3-TTS · 12 Hz · 1.7B Base · 24 kHz">Qwen3-TTS</button>
+            </div>
+            <span class="hint" id="engineHint"></span>
+          </div>
+
           <div class="field">
             <div class="label-row">
               <label for="ttsText">Text</label>
@@ -75,7 +84,7 @@
             <textarea id="ttsText" rows="9" placeholder="Schreib hier den Text, den die Stimme sprechen soll …"></textarea>
           </div>
 
-          <div class="field">
+          <div class="field" id="styleField">
             <label for="ttsStyle">Stil <span class="muted">(optional)</span></label>
             <input id="ttsStyle" type="text" placeholder="z. B. cheerful, slightly faster">
             <div class="chips" id="styleChips">
@@ -98,9 +107,26 @@
             <input type="checkbox" class="switch" id="ttsUltimate" checked>
           </label>
 
+          <div class="field" id="langField">
+            <label for="ttsQwenLang">Sprache des Textes</label>
+            <select id="ttsQwenLang">
+              <option value="de">Deutsch</option>
+              <option value="en">Englisch</option>
+              <option value="fr">Französisch</option>
+              <option value="es">Spanisch</option>
+              <option value="it">Italienisch</option>
+              <option value="pt">Portugiesisch</option>
+              <option value="ru">Russisch</option>
+              <option value="ja">Japanisch</option>
+              <option value="ko">Koreanisch</option>
+              <option value="zh">Chinesisch</option>
+              <option value="auto">Automatisch</option>
+            </select>
+          </div>
+
           <details class="advanced">
             <summary><span data-icon="sliders"></span>Erweitert</summary>
-            <div class="adv-grid">
+            <div class="adv-grid voxcpm-only">
               <div class="field">
                 <div class="label-row"><label for="ttsCfg">Textnähe (CFG)</label><span class="hint" id="ttsCfgVal">2.0</span></div>
                 <input type="range" id="ttsCfg" min="1" max="3" step="0.1" value="2">
@@ -108,6 +134,13 @@
               <div class="field">
                 <div class="label-row"><label for="ttsSteps">Qualität (Schritte)</label><span class="hint" id="ttsStepsVal">10</span></div>
                 <input type="range" id="ttsSteps" min="4" max="30" step="1" value="10">
+              </div>
+            </div>
+            <div class="adv-grid qwen-only hidden">
+              <div class="field">
+                <div class="label-row"><label for="ttsTemp">Lebendigkeit (Temperatur)</label><span class="hint" id="ttsTempVal">0.9</span></div>
+                <input type="range" id="ttsTemp" min="0.3" max="1.3" step="0.05" value="0.9">
+                <div class="hint">Niedriger = gleichmäßiger und stabiler, höher = ausdrucksstärker.</div>
               </div>
             </div>
           </details>
@@ -133,6 +166,7 @@
             <div class="player" id="mainPlayer"></div>
             <div class="result-stats" id="resultStats"></div>
             <p class="result-text" id="resultText"></p>
+            <p class="hint hidden" id="resultSpoken"></p>
             <div class="result-actions">
               <button class="btn" id="btnSave"><span data-icon="download"></span>Speichern unter …</button>
               <button class="btn ghost" id="btnReveal"><span data-icon="folder"></span>Im Ordner zeigen</button>
@@ -281,8 +315,23 @@
             <div><div class="sr-title">Standard-Textnähe (CFG)</div><div class="sr-sub">Höher = genauer am Text, niedriger = natürlicher.</div></div>
             <div class="range-inline"><input type="range" id="setCfg" min="1" max="3" step="0.1"><span id="setCfgVal"></span></div>
           </div>
+          <div class="set-row">
+            <div><div class="sr-title">Sprache der Texte</div><div class="sr-sub">Vorauswahl auf der Sprechen-Seite.</div></div>
+            <select id="setQwenLang">
+              <option value="de">Deutsch</option>
+              <option value="en">Englisch</option>
+              <option value="fr">Französisch</option>
+              <option value="es">Spanisch</option>
+              <option value="it">Italienisch</option>
+              <option value="auto">Automatisch</option>
+            </select>
+          </div>
           <label class="set-row">
-            <div><div class="sr-title">Text normalisieren</div><div class="sr-sub">Zahlen und Abkürzungen ausschreiben.</div></div>
+            <div><div class="sr-title">Deutsche Textaufbereitung</div><div class="sr-sub">Schreibt Zahlen, Datum, Uhrzeit, Preise, Einheiten und Abkürzungen aus („am 3.10. um 15:30 Uhr, z. B. 3,50 €“ → „am dritten Oktober um fünfzehn Uhr dreißig, zum Beispiel drei Euro fünfzig“). Gilt für beide Modelle.</div></div>
+            <input type="checkbox" class="switch" id="setGermanNorm">
+          </label>
+          <label class="set-row">
+            <div><div class="sr-title">Text normalisieren (VoxCPM2)</div><div class="sr-sub">Eingebaute Normalisierung von VoxCPM2 – nur für Englisch/Chinesisch, bei deutschen Texten wird stattdessen die deutsche Aufbereitung benutzt.</div></div>
             <input type="checkbox" class="switch" id="setNormalize">
           </label>
           <label class="set-row">
@@ -296,8 +345,22 @@
               <option value="off">Aus</option>
             </select>
           </div>
+          <label class="set-row">
+            <div><div class="sr-title">Grafikspeicher freigeben</div><div class="sr-sub">Entlädt vor dem Laden Modelle aus Ollama (Port 11434 und 21434). Teilen sich zwei Programme die Grafikkarte, lagert Windows in den Arbeitsspeicher aus und die Sprachausgabe wird vielfach langsamer.</div></div>
+            <input type="checkbox" class="switch" id="setFreeVram">
+          </label>
           <div class="hw-box" id="hwBox"></div>
           <div class="restart-note hidden" id="restartNote"><span data-icon="info"></span>Änderungen am Modell werden nach einem Neustart des Programms wirksam.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span>Zweites Sprachmodell: Qwen3-TTS</span></div>
+          <div class="set-row">
+            <div><div class="sr-title">Qwen3-TTS 12Hz 1.7B Base</div><div class="sr-sub" id="qwenInfo">Alternative zu VoxCPM2 mit eigenem Klang. Klont aus derselben Referenz, 10 Sprachen inkl. Deutsch, mehrere Sätze gleichzeitig. Braucht eine eigene Umgebung (ca. 3 GB) und beim ersten Sprechen das Modell (ca. 4,5 GB).</div></div>
+            <button class="btn" id="btnQwenInstall"><span data-icon="download"></span>Installieren</button>
+          </div>
+          <div class="set-row">
+          </div>
         </div>
 
         <div class="card">

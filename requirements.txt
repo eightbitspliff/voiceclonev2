@@ -8,3 +8,4 @@ uvicorn
 python-multipart
 pywebview>=5
 sounddevice
+num2words

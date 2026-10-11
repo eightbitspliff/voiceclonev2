@@ -85,7 +85,7 @@ def main() -> None:
             time.sleep(0.05)
 
     # Modell im Hintergrund laden, damit es beim ersten "Sprechen" bereit ist
-    server.engine.load_async()
+    server.preload()
 
     webview = None
     if not args.browser:

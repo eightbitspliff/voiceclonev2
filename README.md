@@ -35,6 +35,17 @@ außerdem in `install.log` und `voiceclone.log` im Installationsordner (`%LOCALA
   Referenz wird nur einmal kodiert und wiederverwendet, Aufwärmlauf nach dem Laden –
   mit automatischem Rückfall, falls die Beschleunigung auf einem System nicht funktioniert
 - Lange Texte werden automatisch in Sätze aufgeteilt; Ausgabe in 48 kHz (intern verlustfrei als WAV)
+- **Deutsche Textaufbereitung** (für beide Modelle): Zahlen, Datum, Uhrzeit, Preise, Prozent, Einheiten
+  und Abkürzungen werden ausgeschrieben („am 3.10. um 15:30 Uhr, z. B. 3,50 €“ → „am dritten Oktober
+  um fünfzehn Uhr dreißig, zum Beispiel drei Euro fünfzig“); Satzgrenzen erkennen Abkürzungen und
+  Ordnungszahlen, statt dort zu trennen
+- **Zweites Sprachmodell Qwen3-TTS** (12Hz 1.7B Base, optional, Einrichtung per Klick unter
+  *Einstellungen*): klont aus derselben Referenz – mit Transkript (ICL) oder nur per Stimmabdruck –,
+  mehrere Sätze pro Durchgang; läuft in eigener Umgebung (`.venv-qwen`, wegen transformers 4.57)
+  als Hintergrundprozess. Umschalten oben auf der Sprechen-Seite; das jeweils andere Modell wird
+  automatisch aus dem Grafikspeicher entladen
+- **Grafikspeicher freigeben**: entlädt vor dem Laden Modelle aus Ollama (Port 11434/21434), damit
+  Windows nicht in den Arbeitsspeicher auslagert; Anzeige des freien Grafikspeichers
 
 ## Voraussetzungen
 
@@ -66,6 +77,9 @@ python voiceclone.pyw --browser  # stattdessen im Browser öffnen
 | `voiceclone.pyw` | Programmstart: lokaler Server + Programmfenster (pywebview / WebView2) |
 | `server.py` | Lokale API (FastAPI) |
 | `voice_engine.py` | Audio-Aufbereitung, Stimmprofile, Aufnahme, VoxCPM2-Synthese |
+| `german_text.py` | Deutsche Textaufbereitung (Zahlen, Datum, Einheiten, Abkürzungen) und Satztrennung |
+| `qwen_engine.py` / `qwen_worker.py` | Qwen3-TTS als Unterprozess (eigene Umgebung `.venv-qwen`) |
+| `install_qwen.ps1` | Einrichtung von Qwen3-TTS (wird aus der App gestartet) |
 | `ui/` | Oberfläche (HTML/CSS/JS, läuft offline) |
 | `install.ps1` | Einrichtung unter Windows (eigenes Python über uv, PyTorch, Pakete) |
 | `installer/` | NSIS-Skripte für Setup und `VoiceClone.exe` |

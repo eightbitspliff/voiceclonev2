@@ -19,16 +19,36 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
+import german_text
+import qwen_engine as qe
 import voice_engine as ve
 
 STATIC_DIR = ve.BASE_DIR / "ui"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 
 app = FastAPI(title="VoiceClone v2")
 settings = ve.load_settings()
 engine = ve.Engine(settings["model"], device=settings["device"],
                    accel=settings.get("accel", "auto"), load_denoiser=settings["load_denoiser"])
+engine.free_vram = bool(settings.get("free_vram", True))
+qwen = qe.QwenEngine(settings["device"])
+qwen.free_vram = engine.free_vram
 recorder = ve.Recorder()
+
+
+def preload() -> None:
+    """Beim Start das zuletzt gewählte Sprachmodell vorladen."""
+    if settings.get("engine") == "qwen" and qe.installed():
+        threading.Thread(target=lambda: _quiet(qwen.load), daemon=True).start()
+    else:
+        engine.load_async()
+
+
+def _quiet(fn) -> None:
+    try:
+        fn()
+    except Exception as exc:
+        print(f"[WARN] {exc}")
 window = None  # wird von voiceclone.pyw gesetzt (pywebview-Fenster)
 
 
@@ -106,7 +126,19 @@ def status():
     return {"state": s.state, "message": s.message, "device": s.device, "gpu": s.gpu,
             "version": APP_VERSION, "desktop": window is not None, "compiled": engine.compiled,
             "dtype": s.extra.get("dtype", ""), "vram_gb": s.extra.get("vram_gb", 0),
-            "triton": s.extra.get("triton", False)}
+            "triton": s.extra.get("triton", False), "vram": ve.vram_usage(),
+            "qwen": {"state": qwen.status.state, "message": qwen.status.message,
+                     "installed": qe.installed(), "install": qwen.install_state,
+                     "install_step": qwen.install_progress() if qwen.install_state["state"] == "running" else "",
+                     "model": qe.QWEN_MODEL}}
+
+
+@app.post("/api/qwen/install")
+def qwen_install():
+    if sys.platform != "win32":
+        raise HTTPException(400, "Die automatische Einrichtung gibt es nur unter Windows (install_qwen.ps1).")
+    qwen.install_async()
+    return status()
 
 
 @app.post("/api/model/load")
@@ -126,6 +158,7 @@ def put_settings(values: dict):
     global settings
     old = settings
     settings = ve.save_settings(values)
+    engine.free_vram = qwen.free_vram = bool(settings.get("free_vram", True))
     restart_keys = ("device", "model", "load_denoiser", "accel")
     needs_restart = any(old.get(k) != settings.get(k) for k in restart_keys)
     return {"settings": settings, "restart_required": needs_restart}
@@ -301,6 +334,9 @@ class GenerateIn(BaseModel):
     cfg_value: float | None = None
     inference_timesteps: int | None = None
     normalize: bool | None = None
+    engine: str = "voxcpm"          # voxcpm | qwen
+    language: str | None = None     # nur Qwen3-TTS
+    temperature: float | None = None  # nur Qwen3-TTS
 
 
 @app.post("/api/generate")
@@ -313,17 +349,43 @@ def generate(body: GenerateIn):
         if profile is None:
             raise HTTPException(404, f"Stimme „{body.voice}“ nicht gefunden.")
 
+    use_qwen = body.engine == "qwen"
+    if use_qwen and profile is None:
+        raise HTTPException(400, "Qwen3-TTS braucht eine geklonte Stimme – bitte eine Stimme auswählen.")
+    if use_qwen and not qe.installed():
+        raise HTTPException(400, "Qwen3-TTS ist noch nicht installiert (Einstellungen → Zweites Sprachmodell).")
+
+    language = (body.language or settings.get("text_language", "de")).lower()
+    german = language == "de" and settings.get("german_normalize", True)
+    # Deutsche Aufbereitung ersetzt die (chinesisch/englische) Normalisierung von VoxCPM2
+    tts_text = german_text.normalize(body.text) if german else body.text
+
     def work(job: Job):
         t0 = time.perf_counter()
-        sr, audio = engine.synthesize(
-            body.text, profile, style=body.style, use_transcript=body.use_transcript,
-            cfg_value=body.cfg_value if body.cfg_value is not None else settings["cfg_value"],
-            inference_timesteps=body.inference_timesteps or settings["inference_timesteps"],
-            normalize=body.normalize if body.normalize is not None else settings["normalize"],
-            progress=job.update, cancel=job.cancel,
-        )
+        # Beide Modelle passen nicht gleichzeitig in 12 GB Grafikspeicher -> das andere entladen
+        if use_qwen:
+            if engine.loaded:
+                job.update(0.0, "Entlade VoxCPM2 …")
+                engine.unload()
+            sr, audio = qwen.synthesize(
+                tts_text, profile, use_transcript=body.use_transcript, language=language,
+                temperature=body.temperature, progress=job.update, cancel=job.cancel)
+        else:
+            if qwen.loaded:
+                job.update(0.0, "Entlade Qwen3-TTS …")
+                qwen.unload()
+            sr, audio = engine.synthesize(
+                tts_text, profile, style=body.style, use_transcript=body.use_transcript,
+                cfg_value=body.cfg_value if body.cfg_value is not None else settings["cfg_value"],
+                inference_timesteps=body.inference_timesteps or settings["inference_timesteps"],
+                normalize=False if german else (body.normalize if body.normalize is not None else settings["normalize"]),
+                progress=job.update, cancel=job.cancel,
+            )
         elapsed = time.perf_counter() - t0
-        meta = ve.save_output(sr, audio, profile.name if profile else None, body.text, body.style)
+        meta = ve.save_output(sr, audio, profile.name if profile else None, body.text,
+                              "" if use_qwen else body.style, "Qwen3-TTS" if use_qwen else "VoxCPM2")
+        if tts_text != body.text:
+            meta["spoken_text"] = tts_text
         meta["gen_seconds"] = round(elapsed, 2)
         meta["rtf"] = round(elapsed / max(meta["duration"], 0.01), 2)
         meta["peaks"] = ve.waveform_peaks(ve.output_path(meta["file"]), 160)

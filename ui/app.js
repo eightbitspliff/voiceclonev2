@@ -204,25 +204,36 @@ let statusTimer = null;
 async function refreshStatus() {
   try {
     const s = await api("/api/status");
+    lastStatus = s;
+    const q = s.qwen || {};
+    const useQwen = currentEngine === "qwen";
+    const st = useQwen ? (q.installed ? q.state : "idle") : s.state;
+    const msg = useQwen ? (q.installed ? q.message : "Qwen3-TTS ist noch nicht installiert") : s.message;
     const el = $("#modelStatus");
-    el.className = `model-status ${s.state}`;
+    el.className = `model-status ${st}`;
     const titles = { idle: "Modell nicht geladen", loading: "Modell lädt …", ready: "Modell bereit", error: "Modellfehler" };
-    $("#msTitle").textContent = titles[s.state] || "Modell";
+    $("#msTitle").textContent = titles[st] || "Modell";
     const dev = s.gpu ? s.gpu : s.device ? (s.device.startsWith("cuda") ? "Grafikkarte" : s.device.toUpperCase()) : "";
-    $("#msSub").textContent = s.state === "ready" ? `VoxCPM2 · ${dev || "bereit"}${s.compiled ? " · ⚡ beschleunigt" : ""}`
-      : s.state === "loading" ? "Erster Start: Download ca. 5 GB" : s.message;
+    const name = useQwen ? "Qwen3-TTS" : "VoxCPM2";
+    $("#msSub").textContent = st === "ready" ? `${name} · ${dev || "Grafikkarte"}${!useQwen && s.compiled ? " · ⚡ beschleunigt" : ""}`
+      : st === "loading" ? (useQwen ? "Erster Start: Download ca. 4,5 GB" : "Erster Start: Download ca. 5 GB")
+        : useQwen && st === "idle" ? (q.installed ? "Lädt beim ersten Sprechen" : "Nicht installiert") : msg;
     renderHardware(s);
-    el.title = s.message;
-    $("#infoVersion").textContent = `VoiceClone ${s.version} · VoxCPM2`;
-    $("#infoDevice").textContent = s.state === "ready" ? `Läuft auf: ${s.gpu || s.device}` : titles[s.state];
+    renderQwen(q);
+    updateEngineUi();
+    el.title = msg;
+    $("#infoVersion").textContent = `VoiceClone ${s.version} · VoxCPM2${q.installed ? " + Qwen3-TTS" : ""}`;
+    $("#infoDevice").textContent = st === "ready" ? `Läuft auf: ${s.gpu || s.device || dev}` : titles[st];
     clearTimeout(statusTimer);
-    statusTimer = setTimeout(refreshStatus, s.state === "ready" ? 15000 : 2000);
+    const busy = st === "loading" || (q.install && q.install.state === "running");
+    statusTimer = setTimeout(refreshStatus, busy ? 2000 : 15000);
   } catch (e) {
     clearTimeout(statusTimer);
     statusTimer = setTimeout(refreshStatus, 3000);
   }
 }
 $("#modelStatus").addEventListener("click", async () => {
+  if (currentEngine === "qwen") { if (!(lastStatus.qwen || {}).installed) showPage("settings"); return; }
   if ($("#modelStatus").classList.contains("error") || $("#modelStatus").classList.contains("idle")) {
     await api("/api/model/load", { method: "POST" }); refreshStatus();
   }
@@ -264,16 +275,46 @@ function renderPicker() {
     try { localStorage.setItem("vc-voice-chosen", "1"); } catch (e) { /* ignorieren */ }
     renderPicker();
   }));
+  updateEngineUi();
+}
+
+// ------------------------------------------------------------------ Modellwahl
+let currentEngine = "voxcpm";
+let lastStatus = {};
+function updateEngineUi() {
+  const qwen = currentEngine === "qwen";
+  $$("#engineSeg button").forEach((b) => b.classList.toggle("active", b.dataset.value === currentEngine));
+  $("#styleField").classList.toggle("hidden", qwen);
+  $$(".voxcpm-only").forEach((e) => e.classList.toggle("hidden", qwen));
+  $$(".qwen-only").forEach((e) => e.classList.toggle("hidden", !qwen));
+  const hint = $("#engineHint");
+  const q = lastStatus.qwen || {};
+  let text = "", warn = false;
+  if (qwen) {
+    if (!q.installed) { text = q.install && q.install.state === "running" ? "Wird gerade installiert …" : "Noch nicht installiert – unter Einstellungen mit einem Klick einrichten."; warn = !(q.install && q.install.state === "running"); }
+    else if (!selectedVoice) { text = "Braucht eine geklonte Stimme."; warn = true; }
+    else text = "24 kHz · 1.7B · eigener Klang – gut zum Vergleichen.";
+  } else text = "48 kHz · 2B · Stil-Anweisungen möglich.";
+  hint.textContent = text;
+  hint.classList.toggle("warn", warn);
   updateUltimate();
 }
+$$("#engineSeg button").forEach((b) => b.addEventListener("click", () => {
+  if (currentEngine === b.dataset.value) return;
+  currentEngine = b.dataset.value;
+  updateEngineUi();
+  saveSetting({ engine: currentEngine });
+  refreshStatus();
+}));
 
 function updateUltimate() {
   const v = voices.find((x) => x.name === selectedVoice);
   const row = $("#ultimateRow");
-  const can = !!(v && v.transcript_trusted);
+  const can = !!(v && v.transcript_trusted) && currentEngine !== "qwen";
   row.classList.toggle("disabled", !can);
   row.querySelector(".sr-sub").textContent = !v
     ? "Nur bei geklonten Stimmen verfügbar."
+    : currentEngine === "qwen" ? "Qwen3-TTS nutzt den Stimmabdruck der Referenz – mit Transkript setzte es im Deutsch-Test Wörter aus der Referenz vor den Satz."
     : can ? "Nutzt das Transkript der Referenz („Ultimate Cloning“). Stil-Anweisungen werden dann ignoriert. Bei unverständlicher Ausgabe ausschalten."
       : v.transcript ? "Das Transkript stammt von der alten Spracherkennung und ist vermutlich falsch – unter „Stimmen“ neu erkennen."
         : "Diese Stimme hat noch kein Transkript – unter „Stimmen“ ergänzen.";
@@ -501,6 +542,7 @@ $("#ttsStyle").addEventListener("input", () => {
 });
 $("#ttsCfg").addEventListener("input", (e) => { $("#ttsCfgVal").textContent = (+e.target.value).toFixed(1); });
 $("#ttsSteps").addEventListener("input", (e) => { $("#ttsStepsVal").textContent = e.target.value; });
+$("#ttsTemp").addEventListener("input", (e) => { $("#ttsTempVal").textContent = (+e.target.value).toFixed(2); });
 
 let currentJob = null;
 let lastResult = null;
@@ -520,10 +562,13 @@ async function speak() {
   $("#genPct").textContent = "";
   try {
     const voice = voices.find((v) => v.name === selectedVoice);
+    const qwen = currentEngine === "qwen";
+    if (qwen && !voice) throw new Error("Qwen3-TTS braucht eine geklonte Stimme – bitte links eine Stimme auswählen.");
     currentJob = await api("/api/generate", { method: "POST", body: {
-      text, voice: selectedVoice, style: $("#ttsStyle").value,
+      text, voice: selectedVoice, style: qwen ? "" : $("#ttsStyle").value,
       use_transcript: !!(voice && voice.transcript_trusted && $("#ttsUltimate").checked),
       cfg_value: +$("#ttsCfg").value, inference_timesteps: +$("#ttsSteps").value,
+      engine: currentEngine, language: $("#ttsQwenLang").value, temperature: qwen ? +$("#ttsTemp").value : null,
     } });
     const job = await pollJob(currentJob, (j) => {
       $("#genMsg").textContent = j.message;
@@ -551,21 +596,43 @@ let resultPlayer = null;
 function renderHardware(s) {
   const box = $("#hwBox");
   if (!box) return;
-  if (s.state !== "ready") { box.innerHTML = `<span class="muted">${esc(s.state === "loading" ? "Modell lädt …" : "Modell nicht geladen")}</span>`; return; }
+  if (s.state !== "ready" && !(s.vram && s.vram.total_gb)) { box.innerHTML = `<span class="muted">${esc(s.state === "loading" ? "Modell lädt …" : "Modell nicht geladen")}</span>`; return; }
   const rows = [
     ["Gerät", s.gpu || (s.device || "").toUpperCase()],
     ["Grafikspeicher", s.vram_gb ? `${s.vram_gb} GB` : "–"],
     ["Rechengenauigkeit", s.dtype || "–"],
     ["Beschleunigung", s.compiled ? "⚡ aktiv (torch.compile + CUDA-Graphs)" : s.triton ? "aus" : "nicht verfügbar (Triton fehlt)"],
   ];
+  if (s.vram && s.vram.total_gb) rows.push(["Grafikspeicher frei", `${s.vram.free_gb.toFixed(1)} von ${s.vram.total_gb.toFixed(1)} GB`]);
   box.innerHTML = rows.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
 }
+function renderQwen(q) {
+  const btn = $("#btnQwenInstall");
+  if (!btn || !q) return;
+  const inst = q.install || {};
+  const running = inst.state === "running";
+  btn.disabled = running;
+  btn.innerHTML = running ? `<span data-icon="download"></span>Installiere …` : q.installed ? `<span data-icon="check"></span>Neu einrichten` : `<span data-icon="download"></span>Installieren`;
+  hydrateIcons(btn);
+  const info = $("#qwenInfo");
+  if (running) info.textContent = `Installation läuft: ${q.install_step || inst.message || "…"}`;
+  else if (inst.state === "error") info.textContent = inst.message;
+  else if (q.installed) info.textContent = `Installiert · ${q.state === "ready" ? "geladen" : q.state === "loading" ? "lädt …" : "lädt beim ersten Sprechen"}. Oben auf der Sprechen-Seite zwischen VoxCPM2 und Qwen3-TTS wechseln.`;
+  if (renderQwen.wasRunning && !running && q.installed) toast("Qwen3-TTS ist eingerichtet.", "success");
+  renderQwen.wasRunning = running;
+}
+$("#btnQwenInstall").addEventListener("click", async () => {
+  try { const s = await api("/api/qwen/install", { method: "POST" }); renderQwen(s.qwen); refreshStatus(); } catch (e) { toast(e.message, "error"); }
+});
+
 function showResult(r) {
   lastResult = r;
   $("#resultBox").classList.remove("hidden");
   $("#resultEmpty").classList.add("hidden");
   resultPlayer = new Player($("#mainPlayer"), `/api/history/${encodeURIComponent(r.file)}/audio`, r.peaks, { duration: r.duration });
   $("#resultText").textContent = r.text;
+  $("#resultSpoken").textContent = r.spoken_text ? `Gesprochen als: ${r.spoken_text}` : "";
+  $("#resultSpoken").classList.toggle("hidden", !r.spoken_text);
   $("#resultStats").innerHTML = r.gen_seconds
     ? `<span>${r.duration.toFixed(1)} s Audio</span><span>erzeugt in ${r.gen_seconds.toFixed(1)} s</span><span class="${r.rtf <= 1 ? "good" : ""}">${r.rtf <= 1 ? `${(1 / r.rtf).toFixed(1)}× schneller als Echtzeit` : `${r.rtf.toFixed(1)}× Echtzeit`}</span>`
     : "";
@@ -621,6 +688,7 @@ function renderHistory() {
           <span><span data-icon="user"></span>${esc(h.voice || "Standardstimme")}</span>
           <span><span data-icon="clock"></span>${esc(h.created)}</span>
           ${h.style ? `<span><span data-icon="sparkle"></span>${esc(h.style)}</span>` : ""}
+          ${h.engine ? `<span><span data-icon="wave"></span>${esc(h.engine)}</span>` : ""}
         </div>
         <div class="player small"></div>
       </div>
@@ -673,6 +741,12 @@ async function loadSettings() {
   $("#autoTranscript").checked = settings.auto_transcript !== false;
   $("#setAsrLang").value = settings.asr_language || "auto";
   $("#setExportFormat").value = settings.export_format || "wav";
+  $("#setFreeVram").checked = settings.free_vram !== false;
+  $("#setQwenLang").value = settings.text_language || "de";
+  $("#ttsQwenLang").value = settings.text_language || "de";
+  $("#setGermanNorm").checked = settings.german_normalize !== false;
+  currentEngine = settings.engine === "qwen" ? "qwen" : "voxcpm";
+  updateEngineUi();
 }
 async function saveSetting(values) {
   try {
@@ -693,6 +767,9 @@ $("#maxSeconds").addEventListener("change", (e) => saveSetting({ max_ref_seconds
 $("#autoTranscript").addEventListener("change", (e) => saveSetting({ auto_transcript: e.target.checked }));
 $("#setAsrLang").addEventListener("change", (e) => saveSetting({ asr_language: e.target.value }));
 $("#setExportFormat").addEventListener("change", (e) => saveSetting({ export_format: e.target.value }));
+$("#setFreeVram").addEventListener("change", (e) => saveSetting({ free_vram: e.target.checked }));
+$("#setQwenLang").addEventListener("change", (e) => { saveSetting({ text_language: e.target.value }); $("#ttsQwenLang").value = e.target.value; });
+$("#setGermanNorm").addEventListener("change", (e) => saveSetting({ german_normalize: e.target.checked }));
 $("#setInput").addEventListener("change", (e) => saveSetting({ input_device: e.target.value === "" ? null : +e.target.value }));
 
 async function loadDevices() {

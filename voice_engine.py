@@ -43,7 +43,15 @@ DEFAULT_SETTINGS = {
     "input_device": None,
     "asr_language": "auto",     # Sprache für die automatische Transkription
     "export_format": "wav",     # wav | mp3 | ogg | mp4
+    "engine": "voxcpm",         # voxcpm | qwen  (Sprachmodell auf der Sprechen-Seite)
+    "text_language": "de",      # Sprache der Texte (Qwen3-TTS-Sprache + deutsche Aufbereitung)
+    "german_normalize": True,   # Zahlen, Datum, Uhrzeit, Einheiten, Abkürzungen ausschreiben
+    "free_vram": True,          # Ollama-Modelle vor dem Laden aus dem Grafikspeicher werfen
 }
+
+# Ollama-Server, deren geladene Modelle bei Bedarf entladen werden (Standardport + Zusatzports)
+OLLAMA_URLS = [u.strip() for u in os.environ.get(
+    "VOICECLONE_OLLAMA", "http://127.0.0.1:11434,http://127.0.0.1:21434").split(",") if u.strip()]
 
 # Mehrsprachige Spracherkennung (Whisper) für das Referenz-Transkript.
 ASR_MODEL = "openai/whisper-large-v3-turbo"
@@ -276,7 +284,8 @@ def delete_profile(name: str) -> None:
 # --------------------------------------------------------------------------- #
 # Verlauf (erzeugte Audiodateien)
 # --------------------------------------------------------------------------- #
-def save_output(sr: int, audio: np.ndarray, voice_name: str | None, text: str, style: str = "") -> dict:
+def save_output(sr: int, audio: np.ndarray, voice_name: str | None, text: str, style: str = "",
+                engine: str = "") -> dict:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     tag = safe_name(voice_name) if voice_name else "standard"
     stem = f"{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}_{tag}"
@@ -287,6 +296,7 @@ def save_output(sr: int, audio: np.ndarray, voice_name: str | None, text: str, s
         "voice": voice_name or "",
         "text": text,
         "style": style,
+        "engine": engine,
         "duration": round(audio.size / sr, 2),
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -409,8 +419,10 @@ def recording_path(rec_id: str) -> Path | None:
 # Text-Aufteilung für lange Texte
 # --------------------------------------------------------------------------- #
 def split_text(text: str, max_chars: int = 220) -> list[str]:
+    from german_text import split_sentences
+
     text = re.sub(r"[ \t]+", " ", text.strip())
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?;:。！？；])\s+|\n+", text) if s.strip()]
+    sentences = split_sentences(text)
     chunks: list[str] = []
     current = ""
     for s in sentences:
@@ -464,6 +476,51 @@ def hardware_info() -> dict:
     return info
 
 
+def vram_usage() -> dict:
+    """Freier und belegter Grafikspeicher (ganze Karte, auch andere Programme)."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info(0)
+            return {"free_gb": round(free / 1024 ** 3, 2), "total_gb": round(total / 1024 ** 3, 2),
+                    "app_gb": round(torch.cuda.memory_reserved(0) / 1024 ** 3, 2)}
+    except Exception:
+        pass
+    return {}
+
+
+def free_foreign_vram() -> list[str]:
+    """Entlädt Modelle aus laufenden Ollama-Servern, damit VoiceClone den Grafikspeicher
+    für sich hat. Läuft ein Modell zusätzlich im Grafikspeicher, lagert der NVIDIA-Treiber
+    unter Windows in den Arbeitsspeicher aus – die Sprachausgabe wird dann vielfach langsamer."""
+    import urllib.request
+
+    unloaded = []
+    for base in OLLAMA_URLS:
+        try:
+            with urllib.request.urlopen(f"{base}/api/ps", timeout=1.5) as r:
+                models = json.loads(r.read().decode("utf-8")).get("models", [])
+        except Exception:
+            continue
+        for m in models:
+            name = m.get("name") or m.get("model")
+            if not name or not m.get("size_vram"):
+                continue
+            body = json.dumps({"model": name, "keep_alive": 0}).encode("utf-8")
+            req = urllib.request.Request(f"{base}/api/generate", data=body,
+                                         headers={"Content-Type": "application/json"})
+            try:
+                urllib.request.urlopen(req, timeout=20).read()
+                unloaded.append(name)
+            except Exception as exc:
+                print(f"[WARN] Ollama-Modell {name} konnte nicht entladen werden: {exc}")
+    if unloaded:
+        print(f"[INFO] Grafikspeicher freigegeben – Ollama-Modelle entladen: {', '.join(unloaded)}")
+        time.sleep(1.0)
+    return unloaded
+
+
 def _tune_torch() -> None:
     """Globale PyTorch-Einstellungen für NVIDIA-Grafikkarten (Ampere und neuer)."""
     import torch
@@ -483,6 +540,7 @@ class Engine:
         self.accel = accel                 # auto | off
         self.load_denoiser = load_denoiser
         self.compiled = False              # torch.compile + CUDA Graphs aktiv?
+        self.free_vram = True              # Ollama-Modelle vor dem Laden entladen
         self._model = None
         self._lock = threading.Lock()
         self._gen_lock = threading.Lock()
@@ -527,6 +585,8 @@ class Engine:
             msg += " – Beschleunigung wird vorbereitet (einmalig 1–3 Minuten)"
         self.status = EngineStatus("loading", msg)
         try:
+            if self.free_vram:
+                free_foreign_vram()
             _tune_torch()
             try:
                 model = self._load(compile_)
@@ -569,6 +629,27 @@ class Engine:
             model.tts_model.generate(target_text="Hallo.", max_len=8)
         except Exception as exc:
             print(f"[WARN] Aufwärmen übersprungen: {exc}")
+
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
+
+    def unload(self) -> None:
+        """Gibt den Grafikspeicher frei (z. B. wenn Qwen3-TTS geladen wird)."""
+        with self._gen_lock, self._lock:
+            if self._model is None:
+                return
+            self._model = None
+            self._prompt_cache_key = self._prompt_cache = None
+            if self.compiled:
+                try:
+                    import torch
+
+                    torch._dynamo.reset()  # kompilierte Graphen halten sonst Grafikspeicher fest
+                except Exception:
+                    pass
+            self._free_gpu()
+            self.status = EngineStatus("idle", "VoxCPM2 entladen (Grafikspeicher für Qwen3-TTS frei)")
 
     def _disable_compile(self) -> None:
         """Lädt das Modell ohne torch.compile neu (Rückfall bei Laufzeitfehlern)."""
