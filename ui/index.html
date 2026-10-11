@@ -77,16 +77,17 @@
 
           <div class="field">
             <label for="ttsStyle">Stil <span class="muted">(optional)</span></label>
-            <input id="ttsStyle" type="text" placeholder="z. B. fröhlich, etwas schneller">
+            <input id="ttsStyle" type="text" placeholder="z. B. cheerful, slightly faster">
             <div class="chips" id="styleChips">
-              <button class="chip">fröhlich</button>
-              <button class="chip">ruhig und sanft</button>
-              <button class="chip">flüsternd</button>
-              <button class="chip">aufgeregt</button>
-              <button class="chip">traurig</button>
-              <button class="chip">etwas schneller</button>
-              <button class="chip">langsam und deutlich</button>
+              <button class="chip" data-en="cheerful">fröhlich</button>
+              <button class="chip" data-en="calm and gentle">ruhig und sanft</button>
+              <button class="chip" data-en="whispering">flüsternd</button>
+              <button class="chip" data-en="excited">aufgeregt</button>
+              <button class="chip" data-en="sad">traurig</button>
+              <button class="chip" data-en="slightly faster">etwas schneller</button>
+              <button class="chip" data-en="slow and clear">langsam und deutlich</button>
             </div>
+            <div class="hint">Stil-Anweisungen versteht das Modell am besten auf Englisch – die Vorschläge werden automatisch übersetzt.</div>
           </div>
 
           <label class="switch-row" id="ultimateRow">
@@ -191,7 +192,7 @@
             <label class="switch-row compact">
               <div>
                 <div class="sr-title">Transkript automatisch erstellen</div>
-                <div class="sr-sub">Für maximale Ähnlichkeit (lädt beim ersten Mal ein Spracherkennungs-Modell).</div>
+                <div class="sr-sub">Erkennt den gesprochenen Text mit Whisper (auch Deutsch) – für maximale Ähnlichkeit. Beim ersten Mal ca. 1,6 GB Download.</div>
               </div>
               <input type="checkbox" class="switch" id="autoTranscript" checked>
             </label>
@@ -300,6 +301,21 @@
             <div><div class="sr-title">Mikrofon</div><div class="sr-sub">Eingabegerät für eigene Aufnahmen.</div></div>
             <select id="setInput"></select>
           </div>
+          <div class="set-row">
+            <div><div class="sr-title">Sprache der Aufnahmen</div><div class="sr-sub">Für das automatische Transkript (Whisper).</div></div>
+            <select id="setAsrLang">
+              <option value="auto">Automatisch erkennen</option>
+              <option value="de">Deutsch</option>
+              <option value="en">Englisch</option>
+              <option value="fr">Französisch</option>
+              <option value="es">Spanisch</option>
+              <option value="it">Italienisch</option>
+              <option value="nl">Niederländisch</option>
+              <option value="pl">Polnisch</option>
+              <option value="tr">Türkisch</option>
+              <option value="ru">Russisch</option>
+            </select>
+          </div>
         </div>
 
         <div class="card">
@@ -326,7 +342,7 @@
 <dialog id="transcriptDialog" class="dialog">
   <form method="dialog">
     <h3>Transkript bearbeiten</h3>
-    <p class="muted">Das Transkript muss exakt dem entsprechen, was in der Referenz gesprochen wird.</p>
+    <p class="muted">Das Transkript muss <b>exakt</b> dem entsprechen, was in der Referenz gesprochen wird – Wort für Wort. Ein falsches Transkript führt zu unverständlicher Sprache. Im Zweifel „Maximale Ähnlichkeit“ ausschalten.</p>
     <div class="player small" id="dialogPlayer"></div>
     <textarea id="transcriptText" rows="6"></textarea>
     <div class="dialog-actions">

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 import voice_engine as ve
 
 STATIC_DIR = ve.BASE_DIR / "ui"
-APP_VERSION = "2.0.2"
+APP_VERSION = "2.1.0"
 
 app = FastAPI(title="VoiceClone v2")
 settings = ve.load_settings()
@@ -177,7 +177,8 @@ def recording_delete(rec_id: str):
 # --------------------------------------------------------------------------- #
 def _voice_dict(p: ve.VoiceProfile) -> dict:
     return {"name": p.name, "transcript": p.transcript, "duration": p.duration,
-            "sources": p.sources, "created": p.created, "peaks": ve.waveform_peaks(p.wav_path, 80)}
+            "sources": p.sources, "created": p.created, "peaks": ve.waveform_peaks(p.wav_path, 80),
+            "transcript_source": p.transcript_source, "transcript_trusted": p.transcript_trusted}
 
 
 @app.get("/api/voices")
@@ -224,9 +225,10 @@ async def create_voice(
             profile = ve.save_profile(name, audio, "", used)
             warning = ""
             if auto_transcript:
-                job.update(0.4, "Erstelle Transkript (Spracherkennung) …")
+                job.update(0.4, "Erkenne gesprochenen Text (Whisper, beim ersten Mal Download ca. 1,6 GB) …")
                 try:
-                    ve.update_transcript(name, engine.transcribe(str(profile.wav_path)))
+                    text = engine.transcribe(str(profile.wav_path), settings.get("asr_language", "auto"))
+                    ve.update_transcript(name, text, "whisper")
                 except Exception as exc:
                     warning = f"Automatisches Transkript fehlgeschlagen: {exc}"
             for rec_id in filter(None, recordings.split(",")):
@@ -250,7 +252,7 @@ class TranscriptIn(BaseModel):
 def put_transcript(name: str, body: TranscriptIn):
     if ve.load_profile(name) is None:
         raise HTTPException(404, "Stimme nicht gefunden")
-    ve.update_transcript(name, body.transcript)
+    ve.update_transcript(name, body.transcript, "manual")
     return _voice_dict(ve.load_profile(name))
 
 
@@ -261,8 +263,9 @@ def retranscribe(name: str):
         raise HTTPException(404, "Stimme nicht gefunden")
 
     def work(job: Job):
-        job.update(0.2, "Erstelle Transkript …")
-        ve.update_transcript(name, engine.transcribe(str(profile.wav_path)))
+        job.update(0.2, "Erkenne gesprochenen Text (Whisper) …")
+        text = engine.transcribe(str(profile.wav_path), settings.get("asr_language", "auto"))
+        ve.update_transcript(name, text, "whisper")
         return _voice_dict(ve.load_profile(name))
 
     return run_job("transcribe", work).as_dict()

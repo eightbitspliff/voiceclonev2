@@ -373,6 +373,10 @@ kbd { font-family: inherit; font-size: 11px; background: var(--surface-3); borde
 .vc-transcript.none { color: var(--text-3); font-style: italic; }
 .vc-actions { display: flex; gap: 8px; }
 .vc-actions .btn { flex: 1; }
+.tag.warn { background: rgba(245, 165, 36, .16); color: var(--warning); }
+.vc-warn { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--warning); background: rgba(245, 165, 36, .12); border-radius: 8px; padding: 8px 10px; }
+.vc-warn [data-icon] { width: 15px; height: 15px; margin-top: 1px; }
+.field > .hint { margin-top: -2px; }
 .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; background: rgba(47, 182, 124, .14); color: var(--success); margin-left: 6px; }
 
 /* ---------- Verlauf ---------- */
@@ -458,3 +462,7 @@ label.set-row { cursor: pointer; }
   .range-inline, select, .search input { width: 100%; }
   .adv-grid { grid-template-columns: 1fr; }
 }
+
+/* Deaktivierter Schalter wirkt immer "aus" */
+.switch-row.disabled .switch { background: var(--surface-3); border-color: var(--border-strong); }
+.switch-row.disabled .switch::after { transform: none; }

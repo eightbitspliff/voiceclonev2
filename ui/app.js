@@ -253,7 +253,7 @@ function renderPicker() {
       <span><div class="vp-name">Standardstimme</div><div class="vp-sub">ohne Klonen</div></span></button>`];
   for (const v of voices) {
     items.push(`<button class="vp-item ${v.name === selectedVoice ? "active" : ""}" data-voice="${esc(v.name)}">
-      ${avatar(v.name)}<span><div class="vp-name">${esc(v.name)}</div><div class="vp-sub">${v.duration.toFixed(0)} s Referenz${v.transcript ? " · Transkript" : ""}</div></span></button>`);
+      ${avatar(v.name)}<span><div class="vp-name">${esc(v.name)}</div><div class="vp-sub">${v.duration.toFixed(0)} s Referenz${v.transcript_trusted ? " · Transkript" : ""}</div></span></button>`);
   }
   $("#voicePicker").innerHTML = items.join("");
   hydrateIcons($("#voicePicker"));
@@ -268,12 +268,13 @@ function renderPicker() {
 function updateUltimate() {
   const v = voices.find((x) => x.name === selectedVoice);
   const row = $("#ultimateRow");
-  const can = !!(v && v.transcript);
+  const can = !!(v && v.transcript_trusted);
   row.classList.toggle("disabled", !can);
   row.querySelector(".sr-sub").textContent = !v
     ? "Nur bei geklonten Stimmen verfügbar."
-    : can ? "Nutzt das Transkript der Referenz („Ultimate Cloning“). Stil-Anweisungen werden dann ignoriert."
-      : "Diese Stimme hat noch kein Transkript – unter „Stimmen“ ergänzen.";
+    : can ? "Nutzt das Transkript der Referenz („Ultimate Cloning“). Stil-Anweisungen werden dann ignoriert. Bei unverständlicher Ausgabe ausschalten."
+      : v.transcript ? "Das Transkript stammt von der alten Spracherkennung und ist vermutlich falsch – unter „Stimmen“ neu erkennen."
+        : "Diese Stimme hat noch kein Transkript – unter „Stimmen“ ergänzen.";
 }
 
 function renderVoiceGrid() {
@@ -283,11 +284,12 @@ function renderVoiceGrid() {
     <div class="card voice-card" data-i="${i}">
       <div class="vc-head">
         ${avatar(v.name, "lg")}
-        <div><div class="vc-name">${esc(v.name)}${v.transcript ? '<span class="tag">Transkript</span>' : ""}</div>
+        <div><div class="vc-name">${esc(v.name)}${v.transcript_trusted ? '<span class="tag">Transkript</span>' : v.transcript ? '<span class="tag warn">Transkript prüfen</span>' : ""}</div>
           <div class="vc-meta">${v.duration.toFixed(1)} s · ${v.sources.length} Quelle(n) · ${esc(v.created.slice(0, 10))}</div></div>
         <button class="icon-btn danger" data-act="delete" title="Löschen"><span data-icon="trash"></span></button>
       </div>
       <div class="player small"></div>
+      ${v.transcript && !v.transcript_trusted ? '<div class="vc-warn"><span data-icon="alert"></span>Altes Transkript – vermutlich fehlerhaft. Bitte „Transkript“ → „Automatisch erkennen“.</div>' : ""}
       <div class="vc-transcript ${v.transcript ? "" : "none"}">${v.transcript ? esc(v.transcript) : "Kein Transkript – für maximale Ähnlichkeit hinzufügen."}</div>
       <div class="vc-actions">
         <button class="btn ghost small" data-act="edit"><span data-icon="edit"></span>Transkript</button>
@@ -487,12 +489,13 @@ $$("#styleChips .chip").forEach((c) => c.addEventListener("click", () => {
   const cur = $("#ttsStyle").value.trim();
   const active = c.classList.toggle("active");
   const parts = cur ? cur.split(/\s*,\s*/).filter(Boolean) : [];
-  const next = active ? [...parts, c.textContent] : parts.filter((p) => p !== c.textContent);
+  const en = c.dataset.en || c.textContent;
+  const next = active ? [...parts, en] : parts.filter((p) => p !== en);
   $("#ttsStyle").value = next.join(", ");
 }));
 $("#ttsStyle").addEventListener("input", () => {
   const parts = $("#ttsStyle").value.split(/\s*,\s*/);
-  $$("#styleChips .chip").forEach((c) => c.classList.toggle("active", parts.includes(c.textContent)));
+  $$("#styleChips .chip").forEach((c) => c.classList.toggle("active", parts.includes(c.dataset.en || c.textContent)));
 });
 $("#ttsCfg").addEventListener("input", (e) => { $("#ttsCfgVal").textContent = (+e.target.value).toFixed(1); });
 $("#ttsSteps").addEventListener("input", (e) => { $("#ttsStepsVal").textContent = e.target.value; });
@@ -517,7 +520,7 @@ async function speak() {
     const voice = voices.find((v) => v.name === selectedVoice);
     currentJob = await api("/api/generate", { method: "POST", body: {
       text, voice: selectedVoice, style: $("#ttsStyle").value,
-      use_transcript: !!(voice && voice.transcript && $("#ttsUltimate").checked),
+      use_transcript: !!(voice && voice.transcript_trusted && $("#ttsUltimate").checked),
       cfg_value: +$("#ttsCfg").value, inference_timesteps: +$("#ttsSteps").value,
     } });
     const job = await pollJob(currentJob, (j) => {
@@ -634,6 +637,7 @@ async function loadSettings() {
   $("#ttsCfg").value = settings.cfg_value; $("#ttsCfgVal").textContent = (+settings.cfg_value).toFixed(1);
   $("#maxSeconds").value = settings.max_ref_seconds; $("#maxSecondsVal").textContent = `${settings.max_ref_seconds} s`;
   $("#autoTranscript").checked = settings.auto_transcript !== false;
+  $("#setAsrLang").value = settings.asr_language || "auto";
 }
 async function saveSetting(values) {
   try {
@@ -652,6 +656,7 @@ $("#setDenoiser").addEventListener("change", (e) => saveSetting({ load_denoiser:
 $("#setOptimize").addEventListener("change", (e) => saveSetting({ optimize: e.target.checked }));
 $("#maxSeconds").addEventListener("change", (e) => saveSetting({ max_ref_seconds: +e.target.value }));
 $("#autoTranscript").addEventListener("change", (e) => saveSetting({ auto_transcript: e.target.checked }));
+$("#setAsrLang").addEventListener("change", (e) => saveSetting({ asr_language: e.target.value }));
 $("#setInput").addEventListener("change", (e) => saveSetting({ input_device: e.target.value === "" ? null : +e.target.value }));
 
 async function loadDevices() {

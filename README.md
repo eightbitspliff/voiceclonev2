@@ -24,7 +24,7 @@ außerdem in `install.log` und `voiceclone.log` im Installationsordner (`%LOCALA
 - **Stimmen**: Audiodateien per Drag & Drop hinzufügen (WAV, MP3, FLAC, OGG, M4A …) und/oder
   **direkt mit dem Mikrofon aufnehmen** (mit Pegelanzeige) – alles wird automatisch bereinigt,
   normalisiert und zu einer Referenz zusammengefügt
-- **Automatisches Transkript** (SenseVoice) für maximale Ähnlichkeit („Ultimate Cloning“),
+- **Automatisches Transkript** (Whisper, auch Deutsch) für maximale Ähnlichkeit („Ultimate Cloning“),
   jederzeit bearbeitbar
 - **Sprechen**: Stimme wählen, Text eingeben, optional Stil-Anweisung (Vorschläge per Klick),
   Fortschritt mit Abbrechen, Wiedergabe mit Wellenform, *Speichern unter …*
@@ -43,7 +43,8 @@ außerdem in `install.log` und `voiceclone.log` im Installationsordner (`%LOCALA
 - 10–30 Sekunden klare Sprache, nur ein Sprecher, ohne Musik, Hall oder Hintergrundgeräusche.
 - „Maximale Ähnlichkeit“ nutzt das Transkript – es muss exakt dem Gesprochenen entsprechen
   (unter *Stimmen → Transkript* korrigierbar).
-- Für Stil-Anweisungen „Maximale Ähnlichkeit“ ausschalten.
+- Für Stil-Anweisungen „Maximale Ähnlichkeit“ ausschalten. Stil-Anweisungen wirken am besten auf Englisch (z. B. `cheerful`, `whispering`).
+- Ist die Ausgabe unverständlich, stimmt fast immer das Transkript nicht: unter *Stimmen → Transkript* korrigieren oder „Maximale Ähnlichkeit“ ausschalten.
 - Klingt das Ergebnis instabil: Textnähe (CFG) leicht senken oder Qualität (Schritte) erhöhen.
 
 ## Entwicklung / andere Systeme

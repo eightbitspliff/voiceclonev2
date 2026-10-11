@@ -41,7 +41,11 @@ DEFAULT_SETTINGS = {
     "load_denoiser": False,
     "optimize": False,
     "input_device": None,
+    "asr_language": "auto",     # Sprache für die automatische Transkription
 }
+
+# Mehrsprachige Spracherkennung (Whisper) für das Referenz-Transkript.
+ASR_MODEL = "openai/whisper-large-v3-turbo"
 
 
 # --------------------------------------------------------------------------- #
@@ -158,6 +162,13 @@ class VoiceProfile:
     duration: float
     sources: list[str]
     created: str
+    # "whisper" = automatisch erkannt, "manual" = vom Nutzer bearbeitet,
+    # "" = Altbestand (frühere Spracherkennung konnte kein Deutsch -> nicht vertrauenswürdig)
+    transcript_source: str = ""
+
+    @property
+    def transcript_trusted(self) -> bool:
+        return bool(self.transcript.strip()) and self.transcript_source in ("whisper", "manual")
 
     @property
     def folder(self) -> Path:
@@ -173,7 +184,8 @@ def safe_name(name: str) -> str:
     return re.sub(r"\s+", "_", name) or "stimme"
 
 
-def save_profile(name: str, audio: np.ndarray, transcript: str, sources: list[str]) -> VoiceProfile:
+def save_profile(name: str, audio: np.ndarray, transcript: str, sources: list[str],
+                 transcript_source: str = "") -> VoiceProfile:
     folder = VOICES_DIR / safe_name(name)
     folder.mkdir(parents=True, exist_ok=True)
     sf.write(folder / "reference.wav", audio, REF_SAMPLE_RATE)
@@ -183,15 +195,23 @@ def save_profile(name: str, audio: np.ndarray, transcript: str, sources: list[st
         duration=round(audio.size / REF_SAMPLE_RATE, 2),
         sources=sources,
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
+        transcript_source=transcript_source,
     )
     (folder / "meta.json").write_text(json.dumps(asdict(profile), ensure_ascii=False, indent=2), encoding="utf-8")
     return profile
 
 
-def update_transcript(name: str, transcript: str) -> None:
+def _read_profile(meta: Path) -> VoiceProfile:
+    data = json.loads(meta.read_text(encoding="utf-8"))
+    known = VoiceProfile.__dataclass_fields__
+    return VoiceProfile(**{k: v for k, v in data.items() if k in known})
+
+
+def update_transcript(name: str, transcript: str, source: str) -> None:
     meta = VOICES_DIR / safe_name(name) / "meta.json"
     data = json.loads(meta.read_text(encoding="utf-8"))
     data["transcript"] = transcript.strip()
+    data["transcript_source"] = source
     meta.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -201,7 +221,7 @@ def list_profiles() -> list[VoiceProfile]:
     profiles = []
     for meta in VOICES_DIR.glob("*/meta.json"):
         try:
-            profiles.append(VoiceProfile(**json.loads(meta.read_text(encoding="utf-8"))))
+            profiles.append(_read_profile(meta))
         except Exception:
             continue
     return sorted(profiles, key=lambda p: p.created, reverse=True)
@@ -211,7 +231,7 @@ def load_profile(name: str) -> VoiceProfile | None:
     meta = VOICES_DIR / safe_name(name) / "meta.json"
     if not meta.exists():
         return None
-    return VoiceProfile(**json.loads(meta.read_text(encoding="utf-8")))
+    return _read_profile(meta)
 
 
 def delete_profile(name: str) -> None:
@@ -469,7 +489,7 @@ class Engine:
         if profile is not None:
             ref = str(profile.wav_path)
             kwargs["reference_wav_path"] = ref
-            if use_transcript and profile.transcript:
+            if use_transcript and profile.transcript_trusted:
                 # "Ultimate Cloning": Referenz + Transkript als Fortsetzungs-Prompt
                 kwargs["prompt_wav_path"] = ref
                 kwargs["prompt_text"] = profile.transcript
@@ -499,16 +519,35 @@ class Engine:
         return sr, np.concatenate(out)
 
     # ---- Spracherkennung (für automatisches Transkript) ----
-    def transcribe(self, wav_path: str) -> str:
-        if self._asr is None:
-            from funasr import AutoModel
+    def transcribe(self, wav_path: str, language: str = "auto") -> str:
+        """Erkennt den gesprochenen Text der Referenz mit Whisper (u. a. Deutsch).
 
-            device = self.device
-            if device is None:
-                import torch
+        VoxCPM2 setzt im "Ultimate Cloning" voraus, dass das Transkript exakt dem
+        Gesprochenen entspricht – ein falsches Transkript ergibt unverständliche Sprache.
+        """
+        import torch
+        from transformers import pipeline
 
-                device = "cuda:0" if torch.cuda.is_available() else "cpu"
-            self._asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, log_level="ERROR", device=device)
-        res = self._asr.generate(input=wav_path, language="auto", use_itn=True)
-        text = res[0]["text"] if res else ""
-        return text.split("|>")[-1].strip()
+        device = self.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+        if device == "cuda":
+            device = "cuda:0"
+        asr = pipeline(
+            "automatic-speech-recognition",
+            model=ASR_MODEL,
+            dtype=torch.float16 if device.startswith("cuda") else torch.float32,
+            device=device,
+        )
+        try:
+            audio = load_audio(wav_path, sr=16000)
+            generate_kwargs = {"task": "transcribe"}
+            if language and language != "auto":
+                generate_kwargs["language"] = language
+            result = asr({"raw": audio, "sampling_rate": 16000},
+                         return_timestamps=True, generate_kwargs=generate_kwargs)
+            text = result["text"] if isinstance(result, dict) else str(result)
+            return re.sub(r"\s+", " ", text).strip()
+        finally:
+            # Speicher (VRAM) für VoxCPM2 wieder freigeben
+            del asr
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
