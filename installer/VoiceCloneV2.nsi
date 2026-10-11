@@ -4,10 +4,22 @@
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "x64.nsh"
+
+; Installer/Starter sind 32-Bit-Programme: ohne "Sysnative" würde Windows die
+; 32-Bit-PowerShell starten, die z. B. nvidia-smi.exe nicht findet.
+Var PSEXE
+!macro FindPowerShell
+  StrCpy $PSEXE "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+  ${If} ${RunningX64}
+  ${AndIf} ${FileExists} "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    StrCpy $PSEXE "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+!macroend
 
 !define APPNAME "VoiceClone v2"
 !define APPKEY  "VoiceCloneV2"
-!define VERSION "2.0.1"
+!define VERSION "2.0.2"
 !define UNINST  "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPKEY}"
 
 ; Programmstarter mit Icon zuerst bauen
@@ -83,9 +95,10 @@ Section "Install"
   CreateShortCut "$SMPROGRAMS\${APPNAME}\${APPNAME} (mit Konsole).lnk" "$INSTDIR\start.bat" "" "$INSTDIR\ui\icon.ico" 0
   CreateShortCut "$SMPROGRAMS\${APPNAME}\Deinstallieren.lnk" "$INSTDIR\Uninstall.exe"
 
+  !insertmacro FindPowerShell
   DetailPrint ""
   DetailPrint "Richte Python, PyTorch und VoxCPM2 ein – das kann 10–30 Minuten dauern ..."
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\install.ps1" -NonInteractive'
+  nsExec::ExecToLog '"$PSEXE" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\install.ps1" -NonInteractive'
   Pop $0
   ${If} $0 != 0
     MessageBox MB_ICONEXCLAMATION "Die Einrichtung ist fehlgeschlagen (Details: $INSTDIR\install.log).$\r$\nBeim nächsten Start von ${APPNAME} wird sie automatisch erneut versucht."

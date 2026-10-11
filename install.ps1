@@ -39,6 +39,28 @@ function Test-WebView2 {
     return $false
 }
 
+function Get-NvidiaGpu {
+    # nvidia-smi liegt in System32; aus 32-Bit-Prozessen ist es nur ueber "Sysnative" sichtbar
+    $candidates = @(
+        (Join-Path $env:windir "Sysnative\nvidia-smi.exe"),
+        (Join-Path $env:windir "System32\nvidia-smi.exe"),
+        (Join-Path $env:ProgramFiles "NVIDIA Corporation\NVSMI\nvidia-smi.exe")
+    )
+    $cmd = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if ($cmd) { $candidates = @($cmd.Source) + $candidates }
+    foreach ($smi in $candidates) {
+        if ($smi -and (Test-Path $smi)) {
+            $out = @(& $smi --query-gpu=name --format=csv,noheader 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $out.Count -gt 0 -and $out[0]) { return "$($out[0])".Trim() }
+        }
+    }
+    try {
+        $vc = Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -match "NVIDIA" } | Select-Object -First 1
+        if ($vc) { return $vc.Name }
+    } catch {}
+    return $null
+}
+
 function Get-Uv {
     $bundled = Join-Path $AppDir "bin\uv.exe"
     if (Test-Path $bundled) { return $bundled }
@@ -89,15 +111,25 @@ try {
         }
     }
 
-    $hasNvidia = [bool](Get-Command nvidia-smi -ErrorAction SilentlyContinue)
-    if ($hasNvidia) {
-        Step "NVIDIA-Grafikkarte gefunden - installiere PyTorch mit CUDA (ca. 3 GB, bitte warten)"
+    $gpu = Get-NvidiaGpu
+    if ($gpu) {
+        Step "NVIDIA-Grafikkarte gefunden: $gpu - installiere PyTorch mit CUDA 12.8 (ca. 3 GB, bitte warten)"
         $index = "https://download.pytorch.org/whl/cu128"
     } else {
         Step "Keine NVIDIA-Grafikkarte gefunden - installiere PyTorch fuer CPU (Sprachausgabe wird langsam sein)"
         $index = "https://download.pytorch.org/whl/cpu"
     }
-    & $uv pip install --python $VenvPy torch torchaudio --index-url $index
+    # Falsche Variante (z. B. CPU-Version trotz Grafikkarte) gezielt ersetzen
+    $torchCuda = & $VenvPy -c "import torch; print(torch.version.cuda or 'cpu')" 2>$null
+    $reinstall = @()
+    if ($LASTEXITCODE -eq 0 -and $torchCuda) {
+        Write-Host "Vorhandenes PyTorch: $torchCuda"
+        if (($gpu -and $torchCuda -eq "cpu") -or (-not $gpu -and $torchCuda -ne "cpu")) {
+            Write-Host "PyTorch-Variante passt nicht zur Hardware - wird ersetzt."
+            $reinstall = @("--reinstall-package", "torch", "--reinstall-package", "torchaudio")
+        }
+    }
+    & $uv pip install --python $VenvPy torch torchaudio --index-url $index @reinstall
     if ($LASTEXITCODE -ne 0) { throw "PyTorch-Installation fehlgeschlagen" }
 
     Step "Installiere VoxCPM2 und weitere Pakete"
@@ -107,6 +139,12 @@ try {
     Step "Pruefe Installation"
     & $VenvPy -c "import torch, voxcpm, fastapi, webview, sounddevice; print('PyTorch', torch.__version__, '| CUDA:', torch.cuda.is_available())"
     if ($LASTEXITCODE -ne 0) { throw "Pruefung fehlgeschlagen - siehe install.log" }
+    if ($gpu) {
+        $cudaOk = & $VenvPy -c "import torch; print(torch.cuda.is_available())" 2>$null
+        if ($cudaOk -ne "True") {
+            Write-Host "WARNUNG: Grafikkarte gefunden, aber CUDA ist nicht nutzbar. Bitte den NVIDIA-Treiber aktualisieren." -ForegroundColor Yellow
+        }
+    }
     if ($OnWindows -and -not (Test-Path (Join-Path $VenvBin "pythonw.exe"))) {
         Copy-Item $VenvPy (Join-Path $VenvBin "pythonw.exe")
     }
