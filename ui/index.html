@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoiceClone v2</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script>
+    // Theme so früh wie möglich setzen (kein Aufblitzen)
+    try {
+      const t = localStorage.getItem("vc-theme");
+      const dark = t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    } catch (e) {}
+  </script>
+</head>
+<body>
+<div class="app">
+  <!-- Seitenleiste -->
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="icon.svg" alt="" class="brand-logo">
+      <div>
+        <div class="brand-name">VoiceClone</div>
+        <div class="brand-sub">powered by VoxCPM2</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-page="speak"><span data-icon="wave"></span>Sprechen</button>
+      <button class="nav-item" data-page="voices"><span data-icon="users"></span>Stimmen<span class="badge" id="voiceCount">0</span></button>
+      <button class="nav-item" data-page="history"><span data-icon="clock"></span>Verlauf</button>
+      <button class="nav-item" data-page="settings"><span data-icon="gear"></span>Einstellungen</button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="model-status" id="modelStatus" title="">
+        <span class="dot"></span>
+        <div>
+          <div class="ms-title" id="msTitle">Modell</div>
+          <div class="ms-sub" id="msSub">wird geprüft …</div>
+        </div>
+      </div>
+      <button class="theme-toggle" id="themeToggle" aria-label="Dark Mode umschalten">
+        <span class="tt-track"><span class="tt-thumb"><span data-icon="sun" class="tt-sun"></span><span data-icon="moon" class="tt-moon"></span></span></span>
+        <span class="tt-label" id="themeLabel">Dark Mode</span>
+      </button>
+    </div>
+  </aside>
+
+  <main class="content">
+    <!-- ============ SPRECHEN ============ -->
+    <section class="page active" id="page-speak">
+      <header class="page-head">
+        <div>
+          <h1>Text sprechen</h1>
+          <p>Wähle eine Stimme, gib deinen Text ein und lass ihn sprechen.</p>
+        </div>
+      </header>
+
+      <div class="speak-grid">
+        <div class="card">
+          <div class="card-title">
+            <span>Stimme</span>
+            <button class="link-btn" data-goto="voices"><span data-icon="plus"></span>Neue Stimme</button>
+          </div>
+          <div class="voice-picker" id="voicePicker"></div>
+
+          <div class="field">
+            <div class="label-row">
+              <label for="ttsText">Text</label>
+              <span class="hint" id="charCount">0 Zeichen</span>
+            </div>
+            <textarea id="ttsText" rows="9" placeholder="Schreib hier den Text, den die Stimme sprechen soll …"></textarea>
+          </div>
+
+          <div class="field">
+            <label for="ttsStyle">Stil <span class="muted">(optional)</span></label>
+            <input id="ttsStyle" type="text" placeholder="z. B. fröhlich, etwas schneller">
+            <div class="chips" id="styleChips">
+              <button class="chip">fröhlich</button>
+              <button class="chip">ruhig und sanft</button>
+              <button class="chip">flüsternd</button>
+              <button class="chip">aufgeregt</button>
+              <button class="chip">traurig</button>
+              <button class="chip">etwas schneller</button>
+              <button class="chip">langsam und deutlich</button>
+            </div>
+          </div>
+
+          <label class="switch-row" id="ultimateRow">
+            <div>
+              <div class="sr-title">Maximale Ähnlichkeit</div>
+              <div class="sr-sub">Nutzt das Transkript der Referenz („Ultimate Cloning“). Stil-Anweisungen werden dann ignoriert.</div>
+            </div>
+            <input type="checkbox" class="switch" id="ttsUltimate" checked>
+          </label>
+
+          <details class="advanced">
+            <summary><span data-icon="sliders"></span>Erweitert</summary>
+            <div class="adv-grid">
+              <div class="field">
+                <div class="label-row"><label for="ttsCfg">Textnähe (CFG)</label><span class="hint" id="ttsCfgVal">2.0</span></div>
+                <input type="range" id="ttsCfg" min="1" max="3" step="0.1" value="2">
+              </div>
+              <div class="field">
+                <div class="label-row"><label for="ttsSteps">Qualität (Schritte)</label><span class="hint" id="ttsStepsVal">10</span></div>
+                <input type="range" id="ttsSteps" min="4" max="30" step="1" value="10">
+              </div>
+            </div>
+          </details>
+
+          <div class="actions">
+            <span class="hint kbd-hint"><kbd>Strg</kbd> + <kbd>Enter</kbd></span>
+            <button class="btn primary big" id="btnSpeak"><span data-icon="play"></span>Sprechen</button>
+          </div>
+        </div>
+
+        <div class="card result-card" id="resultCard">
+          <div class="card-title"><span>Ergebnis</span></div>
+          <div class="empty" id="resultEmpty">
+            <span data-icon="wave" class="empty-icon"></span>
+            <p>Hier erscheint deine erzeugte Sprachausgabe.</p>
+          </div>
+          <div class="progress-box hidden" id="genProgress">
+            <div class="pb-head"><span id="genMsg">Starte …</span><span id="genPct">0 %</span></div>
+            <div class="bar"><div class="bar-fill" id="genBar"></div></div>
+            <button class="btn ghost small" id="btnCancel"><span data-icon="x"></span>Abbrechen</button>
+          </div>
+          <div class="result hidden" id="resultBox">
+            <div class="player" id="mainPlayer"></div>
+            <p class="result-text" id="resultText"></p>
+            <div class="result-actions">
+              <button class="btn" id="btnSave"><span data-icon="download"></span>Speichern unter …</button>
+              <button class="btn ghost" id="btnReveal"><span data-icon="folder"></span>Im Ordner zeigen</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ STIMMEN ============ -->
+    <section class="page" id="page-voices">
+      <header class="page-head">
+        <div>
+          <h1>Stimmen</h1>
+          <p>Lade Aufnahmen hoch oder nimm selbst auf – daraus entsteht eine klonbare Stimme.</p>
+        </div>
+        <button class="btn primary" id="btnNewVoice"><span data-icon="plus"></span>Neue Stimme</button>
+      </header>
+
+      <div class="card create-card hidden" id="createCard">
+        <div class="card-title"><span>Neue Stimme erstellen</span><button class="icon-btn" id="btnCloseCreate" title="Schließen"><span data-icon="x"></span></button></div>
+
+        <div class="create-grid">
+          <div>
+            <div class="field">
+              <label for="voiceName">Name der Stimme</label>
+              <input id="voiceName" type="text" placeholder="z. B. Florian" maxlength="60">
+            </div>
+
+            <div class="dropzone" id="dropzone" tabindex="0">
+              <span data-icon="upload" class="dz-icon"></span>
+              <div class="dz-title">Audiodateien hierher ziehen</div>
+              <div class="dz-sub">oder <u>Dateien auswählen</u> · WAV, MP3, FLAC, OGG, M4A</div>
+              <input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus,.webm" multiple hidden>
+            </div>
+
+            <div class="recorder" id="recorder">
+              <button class="rec-btn" id="btnRec" title="Aufnahme starten/stoppen"><span class="rec-inner"></span></button>
+              <div class="rec-info">
+                <div class="rec-title" id="recTitle">Mit dem Mikrofon aufnehmen</div>
+                <div class="meter"><div class="meter-fill" id="recMeter"></div></div>
+                <div class="rec-sub" id="recSub">Klicke auf den Knopf und sprich 10–30 Sekunden.</div>
+              </div>
+              <div class="rec-time" id="recTime">0:00</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="label-row"><label>Aufnahmen</label><span class="hint" id="clipTotal"></span></div>
+            <div class="clip-list" id="clipList">
+              <div class="clip-empty">Noch keine Aufnahmen – lade Dateien hoch oder nimm etwas auf.</div>
+            </div>
+
+            <div class="field">
+              <div class="label-row"><label for="maxSeconds">Maximale Referenzlänge</label><span class="hint" id="maxSecondsVal">30 s</span></div>
+              <input type="range" id="maxSeconds" min="5" max="60" step="1" value="30">
+            </div>
+            <label class="switch-row compact">
+              <div>
+                <div class="sr-title">Transkript automatisch erstellen</div>
+                <div class="sr-sub">Für maximale Ähnlichkeit (lädt beim ersten Mal ein Spracherkennungs-Modell).</div>
+              </div>
+              <input type="checkbox" class="switch" id="autoTranscript" checked>
+            </label>
+
+            <div class="tip"><span data-icon="info"></span>Am besten: 10–30 s klare Sprache, ein Sprecher, ohne Musik oder Hall.</div>
+
+            <div class="progress-box hidden" id="createProgress">
+              <div class="pb-head"><span id="createMsg">…</span><span id="createPct"></span></div>
+              <div class="bar"><div class="bar-fill" id="createBar"></div></div>
+            </div>
+
+            <div class="actions">
+              <button class="btn primary big" id="btnCreate"><span data-icon="check"></span>Stimme erstellen</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="voice-grid" id="voiceGrid"></div>
+      <div class="empty big hidden" id="voicesEmpty">
+        <span data-icon="users" class="empty-icon"></span>
+        <h3>Noch keine Stimmen</h3>
+        <p>Erstelle deine erste Stimme aus Audiodateien oder einer Mikrofonaufnahme.</p>
+        <button class="btn primary" id="btnNewVoice2"><span data-icon="plus"></span>Neue Stimme</button>
+      </div>
+    </section>
+
+    <!-- ============ VERLAUF ============ -->
+    <section class="page" id="page-history">
+      <header class="page-head">
+        <div>
+          <h1>Verlauf</h1>
+          <p>Alle erzeugten Sprachausgaben.</p>
+        </div>
+        <div class="head-actions">
+          <div class="search"><span data-icon="search"></span><input id="historySearch" type="search" placeholder="Suchen …"></div>
+          <button class="btn ghost" data-folder="outputs"><span data-icon="folder"></span>Ordner öffnen</button>
+        </div>
+      </header>
+      <div class="history-list" id="historyList"></div>
+      <div class="empty big hidden" id="historyEmpty">
+        <span data-icon="clock" class="empty-icon"></span>
+        <h3>Noch nichts erzeugt</h3>
+        <p>Deine Sprachausgaben erscheinen hier.</p>
+      </div>
+    </section>
+
+    <!-- ============ EINSTELLUNGEN ============ -->
+    <section class="page" id="page-settings">
+      <header class="page-head">
+        <div>
+          <h1>Einstellungen</h1>
+          <p>Darstellung, Modell und Aufnahme.</p>
+        </div>
+      </header>
+
+      <div class="settings">
+        <div class="card">
+          <div class="card-title"><span>Darstellung</span></div>
+          <div class="set-row">
+            <div><div class="sr-title">Farbschema</div><div class="sr-sub">Hell, Dunkel oder wie Windows.</div></div>
+            <div class="segmented" id="themeSeg">
+              <button data-value="light"><span data-icon="sun"></span>Hell</button>
+              <button data-value="dark"><span data-icon="moon"></span>Dunkel</button>
+              <button data-value="system"><span data-icon="monitor"></span>System</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span>Sprachmodell</span></div>
+          <div class="set-row">
+            <div><div class="sr-title">Rechengerät</div><div class="sr-sub">Grafikkarte (CUDA) ist um ein Vielfaches schneller.</div></div>
+            <select id="setDevice">
+              <option value="auto">Automatisch</option>
+              <option value="cuda">Grafikkarte (CUDA)</option>
+              <option value="cpu">Prozessor (CPU)</option>
+            </select>
+          </div>
+          <div class="set-row">
+            <div><div class="sr-title">Standard-Qualität</div><div class="sr-sub">Inferenz-Schritte: mehr = besser, aber langsamer.</div></div>
+            <div class="range-inline"><input type="range" id="setSteps" min="4" max="30" step="1"><span id="setStepsVal"></span></div>
+          </div>
+          <div class="set-row">
+            <div><div class="sr-title">Standard-Textnähe (CFG)</div><div class="sr-sub">Höher = genauer am Text, niedriger = natürlicher.</div></div>
+            <div class="range-inline"><input type="range" id="setCfg" min="1" max="3" step="0.1"><span id="setCfgVal"></span></div>
+          </div>
+          <label class="set-row">
+            <div><div class="sr-title">Text normalisieren</div><div class="sr-sub">Zahlen und Abkürzungen ausschreiben.</div></div>
+            <input type="checkbox" class="switch" id="setNormalize">
+          </label>
+          <label class="set-row">
+            <div><div class="sr-title">Entrauscher laden</div><div class="sr-sub">Verbessert verrauschte Referenzen (benötigt Neustart).</div></div>
+            <input type="checkbox" class="switch" id="setDenoiser">
+          </label>
+          <label class="set-row">
+            <div><div class="sr-title">Beschleunigung (torch.compile)</div><div class="sr-sub">Nur Linux + NVIDIA, unter Windows meist nicht verfügbar.</div></div>
+            <input type="checkbox" class="switch" id="setOptimize">
+          </label>
+          <div class="restart-note hidden" id="restartNote"><span data-icon="info"></span>Änderungen am Modell werden nach einem Neustart des Programms wirksam.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span>Aufnahme</span></div>
+          <div class="set-row">
+            <div><div class="sr-title">Mikrofon</div><div class="sr-sub">Eingabegerät für eigene Aufnahmen.</div></div>
+            <select id="setInput"></select>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span>Dateien & Info</span></div>
+          <div class="set-row">
+            <div><div class="sr-title">Speicherorte</div><div class="sr-sub">Erzeugte Audios und gespeicherte Stimmen.</div></div>
+            <div class="btn-row">
+              <button class="btn ghost" data-folder="outputs"><span data-icon="folder"></span>Ausgaben</button>
+              <button class="btn ghost" data-folder="voices"><span data-icon="folder"></span>Stimmen</button>
+            </div>
+          </div>
+          <div class="set-row">
+            <div><div class="sr-title">Version</div><div class="sr-sub" id="infoVersion">–</div></div>
+            <div class="sr-sub right" id="infoDevice">–</div>
+          </div>
+          <p class="legal">Bitte klone nur Stimmen von Personen, die dir ihre Erlaubnis gegeben haben.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Transkript-Dialog -->
+<dialog id="transcriptDialog" class="dialog">
+  <form method="dialog">
+    <h3>Transkript bearbeiten</h3>
+    <p class="muted">Das Transkript muss exakt dem entsprechen, was in der Referenz gesprochen wird.</p>
+    <div class="player small" id="dialogPlayer"></div>
+    <textarea id="transcriptText" rows="6"></textarea>
+    <div class="dialog-actions">
+      <button class="btn ghost" value="auto" id="btnAutoTranscript"><span data-icon="sparkle"></span>Automatisch erkennen</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" value="cancel">Abbrechen</button>
+      <button class="btn primary" value="save">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Bestätigungs-Dialog -->
+<dialog id="confirmDialog" class="dialog small">
+  <form method="dialog">
+    <h3 id="confirmTitle">Sicher?</h3>
+    <p class="muted" id="confirmText"></p>
+    <div class="dialog-actions">
+      <span class="spacer"></span>
+      <button class="btn ghost" value="cancel">Abbrechen</button>
+      <button class="btn danger" value="ok">Löschen</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toasts" id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>

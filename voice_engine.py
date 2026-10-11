@@ -1,13 +1,17 @@
-"""Kernlogik: Audio-Aufbereitung, Stimmprofile und VoxCPM2-Synthese."""
+"""Kernlogik: Audio-Aufbereitung, Stimmprofile, Verlauf und VoxCPM2-Synthese."""
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import subprocess
+import tempfile
 import threading
 import time
-from dataclasses import dataclass, asdict
+import uuid
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
 import librosa
@@ -15,12 +19,49 @@ import numpy as np
 import soundfile as sf
 
 BASE_DIR = Path(__file__).resolve().parent
-VOICES_DIR = BASE_DIR / "voices"
-OUTPUTS_DIR = BASE_DIR / "outputs"
+DATA_DIR = Path(os.environ.get("VOICECLONE_DATA", BASE_DIR))
+VOICES_DIR = DATA_DIR / "voices"
+OUTPUTS_DIR = DATA_DIR / "outputs"
+RECORDINGS_DIR = DATA_DIR / "recordings"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 
 # VoxCPM2 kodiert Referenz-Audio mit 16 kHz (gibt aber 48 kHz aus).
 REF_SAMPLE_RATE = 16000
 GAP_SECONDS = 0.3
+
+DEFAULT_SETTINGS = {
+    "theme": "system",          # system | light | dark
+    "device": "auto",           # auto | cuda | cpu
+    "model": "openbmb/VoxCPM2",
+    "cfg_value": 2.0,
+    "inference_timesteps": 10,
+    "max_ref_seconds": 30,
+    "auto_transcript": True,
+    "normalize": False,
+    "load_denoiser": False,
+    "optimize": False,
+    "input_device": None,
+}
+
+
+# --------------------------------------------------------------------------- #
+# Einstellungen
+# --------------------------------------------------------------------------- #
+def load_settings() -> dict:
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        settings.update(json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+    return settings
+
+
+def save_settings(values: dict) -> dict:
+    settings = load_settings()
+    settings.update({k: v for k, v in values.items() if k in DEFAULT_SETTINGS})
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+    return settings
 
 
 # --------------------------------------------------------------------------- #
@@ -28,9 +69,6 @@ GAP_SECONDS = 0.3
 # --------------------------------------------------------------------------- #
 def _ffmpeg_to_wav(path: str) -> str:
     """Konvertiert Formate, die soundfile nicht lesen kann (z. B. M4A/AAC), per FFmpeg."""
-    import subprocess
-    import tempfile
-
     try:
         import imageio_ffmpeg
 
@@ -38,16 +76,22 @@ def _ffmpeg_to_wav(path: str) -> str:
     except Exception:
         ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", path, "-ac", "1",
-                    "-ar", str(REF_SAMPLE_RATE), out], check=True)
+                    "-ar", str(REF_SAMPLE_RATE), out], check=True, creationflags=flags)
     return out
 
 
-def _load_clean(path: str, top_db: float = 35.0) -> np.ndarray:
+def load_audio(path: str, sr: int = REF_SAMPLE_RATE) -> np.ndarray:
     try:
-        audio, _ = librosa.load(path, sr=REF_SAMPLE_RATE, mono=True)
+        audio, _ = librosa.load(path, sr=sr, mono=True)
     except Exception:
-        audio, _ = librosa.load(_ffmpeg_to_wav(path), sr=REF_SAMPLE_RATE, mono=True)
+        audio, _ = librosa.load(_ffmpeg_to_wav(path), sr=sr, mono=True)
+    return audio.astype(np.float32)
+
+
+def _load_clean(path: str, top_db: float = 35.0) -> np.ndarray:
+    audio = load_audio(path)
     if audio.size == 0:
         return audio
     audio, _ = librosa.effects.trim(audio, top_db=top_db)
@@ -89,6 +133,21 @@ def build_reference(paths: list[str], max_seconds: float) -> tuple[np.ndarray, l
     return np.concatenate(parts), used
 
 
+def waveform_peaks(path: Path, bins: int = 120) -> list[float]:
+    """Grobe Hüllkurve für die Wellenform-Anzeige im Interface."""
+    try:
+        audio, _ = sf.read(path, dtype="float32", always_2d=True)
+        audio = np.abs(audio.mean(axis=1))
+    except Exception:
+        return []
+    if audio.size == 0:
+        return []
+    chunks = np.array_split(audio, bins)
+    peaks = np.array([c.max() if c.size else 0.0 for c in chunks])
+    top = peaks.max() or 1.0
+    return [round(float(p / top), 3) for p in peaks]
+
+
 # --------------------------------------------------------------------------- #
 # Stimmprofile
 # --------------------------------------------------------------------------- #
@@ -101,8 +160,12 @@ class VoiceProfile:
     created: str
 
     @property
+    def folder(self) -> Path:
+        return VOICES_DIR / safe_name(self.name)
+
+    @property
     def wav_path(self) -> Path:
-        return VOICES_DIR / safe_name(self.name) / "reference.wav"
+        return self.folder / "reference.wav"
 
 
 def safe_name(name: str) -> str:
@@ -132,16 +195,16 @@ def update_transcript(name: str, transcript: str) -> None:
     meta.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def list_profiles() -> list[str]:
+def list_profiles() -> list[VoiceProfile]:
     if not VOICES_DIR.exists():
         return []
-    names = []
-    for meta in sorted(VOICES_DIR.glob("*/meta.json")):
+    profiles = []
+    for meta in VOICES_DIR.glob("*/meta.json"):
         try:
-            names.append(json.loads(meta.read_text(encoding="utf-8"))["name"])
+            profiles.append(VoiceProfile(**json.loads(meta.read_text(encoding="utf-8"))))
         except Exception:
             continue
-    return names
+    return sorted(profiles, key=lambda p: p.created, reverse=True)
 
 
 def load_profile(name: str) -> VoiceProfile | None:
@@ -155,6 +218,138 @@ def delete_profile(name: str) -> None:
     folder = VOICES_DIR / safe_name(name)
     if folder.exists():
         shutil.rmtree(folder)
+
+
+# --------------------------------------------------------------------------- #
+# Verlauf (erzeugte Audiodateien)
+# --------------------------------------------------------------------------- #
+def save_output(sr: int, audio: np.ndarray, voice_name: str | None, text: str, style: str = "") -> dict:
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    tag = safe_name(voice_name) if voice_name else "standard"
+    stem = f"{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}_{tag}"
+    path = OUTPUTS_DIR / f"{stem}.wav"
+    sf.write(path, audio, sr)
+    meta = {
+        "file": path.name,
+        "voice": voice_name or "",
+        "text": text,
+        "style": style,
+        "duration": round(audio.size / sr, 2),
+        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    path.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return meta
+
+
+def list_outputs() -> list[dict]:
+    if not OUTPUTS_DIR.exists():
+        return []
+    items = []
+    for wav in OUTPUTS_DIR.glob("*.wav"):
+        meta_file = wav.with_suffix(".json")
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {"file": wav.name, "voice": "", "text": "", "style": "",
+                    "duration": round(sf.info(wav).duration, 2),
+                    "created": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(wav.stat().st_mtime))}
+        items.append(meta)
+    return sorted(items, key=lambda m: m["file"], reverse=True)
+
+
+def output_path(file: str) -> Path | None:
+    path = (OUTPUTS_DIR / Path(file).name)
+    return path if path.suffix == ".wav" and path.exists() else None
+
+
+def delete_output(file: str) -> None:
+    path = output_path(file)
+    if path:
+        path.unlink(missing_ok=True)
+        path.with_suffix(".json").unlink(missing_ok=True)
+
+
+# --------------------------------------------------------------------------- #
+# Mikrofonaufnahme (läuft in Python, unabhängig vom Fenster/Browser)
+# --------------------------------------------------------------------------- #
+class Recorder:
+    def __init__(self):
+        self._stream = None
+        self._frames: list[np.ndarray] = []
+        self._sr = 0
+        self._started = 0.0
+        self.level = 0.0
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def devices() -> list[dict]:
+        try:
+            import sounddevice as sd
+
+            default_in = sd.default.device[0]
+            return [
+                {"id": i, "name": d["name"], "default": i == default_in}
+                for i, d in enumerate(sd.query_devices())
+                if d["max_input_channels"] > 0
+            ]
+        except Exception:
+            return []
+
+    @property
+    def active(self) -> bool:
+        return self._stream is not None
+
+    @property
+    def elapsed(self) -> float:
+        return time.time() - self._started if self.active else 0.0
+
+    def start(self, device=None) -> None:
+        try:
+            import sounddevice as sd
+        except Exception as exc:  # PortAudio fehlt o. Ä.
+            raise RuntimeError(f"Audio-Aufnahme nicht verfügbar: {exc}")
+        if self.active:
+            return
+        info = sd.query_devices(device, "input")
+        self._sr = int(info["default_samplerate"]) or 48000
+        self._frames = []
+        self.level = 0.0
+
+        def callback(indata, frames, t, status):
+            mono = indata.mean(axis=1).copy()
+            with self._lock:
+                self._frames.append(mono)
+            self.level = float(min(1.0, np.sqrt(np.mean(mono ** 2)) * 6))
+
+        self._stream = sd.InputStream(device=device, channels=1, samplerate=self._sr,
+                                      dtype="float32", callback=callback)
+        self._stream.start()
+        self._started = time.time()
+
+    def stop(self) -> dict:
+        if not self.active:
+            raise RuntimeError("Es läuft keine Aufnahme.")
+        self._stream.stop()
+        self._stream.close()
+        self._stream = None
+        self.level = 0.0
+        with self._lock:
+            audio = np.concatenate(self._frames) if self._frames else np.zeros(0, dtype=np.float32)
+            self._frames = []
+        if audio.size < self._sr * 0.5:
+            raise RuntimeError("Aufnahme zu kurz (mind. 0,5 Sekunden).")
+        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        rec_id = uuid.uuid4().hex[:12]
+        path = RECORDINGS_DIR / f"{rec_id}.wav"
+        sf.write(path, audio, self._sr)
+        return {"id": rec_id, "duration": round(audio.size / self._sr, 2)}
+
+
+def recording_path(rec_id: str) -> Path | None:
+    if not re.fullmatch(r"[0-9a-f]{12}", rec_id or ""):
+        return None
+    path = RECORDINGS_DIR / f"{rec_id}.wav"
+    return path if path.exists() else None
 
 
 # --------------------------------------------------------------------------- #
@@ -179,19 +374,43 @@ def split_text(text: str, max_chars: int = 220) -> list[str]:
     return chunks
 
 
+class Cancelled(Exception):
+    pass
+
+
 # --------------------------------------------------------------------------- #
-# Modelle (lazy geladen)
+# Modelle
 # --------------------------------------------------------------------------- #
+@dataclass
+class EngineStatus:
+    state: str = "idle"          # idle | loading | ready | error
+    message: str = "Modell noch nicht geladen"
+    device: str = ""
+    gpu: str = ""
+    extra: dict = field(default_factory=dict)
+
+
 class Engine:
     def __init__(self, model_id: str = "openbmb/VoxCPM2", device: str | None = None,
                  optimize: bool = False, load_denoiser: bool = False):
         self.model_id = model_id
-        self.device = device
+        self.device = None if device in (None, "", "auto") else device
         self.optimize = optimize
         self.load_denoiser = load_denoiser
         self._model = None
         self._asr = None
         self._lock = threading.Lock()
+        self._gen_lock = threading.Lock()
+        self.status = EngineStatus()
+
+    def load_async(self) -> None:
+        threading.Thread(target=lambda: self._safe_load(), daemon=True).start()
+
+    def _safe_load(self) -> None:
+        try:
+            _ = self.model
+        except Exception:
+            pass
 
     # ---- TTS ----
     @property
@@ -199,17 +418,33 @@ class Engine:
         if self._model is None:
             with self._lock:
                 if self._model is None:
-                    from voxcpm import VoxCPM
+                    self.status = EngineStatus("loading", "Lade VoxCPM2 … (beim ersten Start wird das Modell heruntergeladen, ca. 5 GB)")
+                    try:
+                        from voxcpm import VoxCPM
 
-                    print(f"[INFO] Lade {self.model_id} … (beim ersten Start wird das Modell heruntergeladen)")
-                    self._model = VoxCPM.from_pretrained(
-                        self.model_id,
-                        load_denoiser=self.load_denoiser,
-                        optimize=self.optimize,
-                        device=self.device,
-                    )
-                    print("[INFO] Modell geladen.")
+                        model = VoxCPM.from_pretrained(
+                            self.model_id,
+                            load_denoiser=self.load_denoiser,
+                            optimize=self.optimize,
+                            device=self.device,
+                        )
+                    except Exception as exc:
+                        self.status = EngineStatus("error", f"Modell konnte nicht geladen werden: {exc}")
+                        raise
+                    self._model = model
+                    self.status = EngineStatus("ready", "Bereit", *self._device_info(model))
         return self._model
+
+    @staticmethod
+    def _device_info(model) -> tuple[str, str]:
+        try:
+            import torch
+
+            dev = str(getattr(model.tts_model, "device", "")) or ("cuda" if torch.cuda.is_available() else "cpu")
+            gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else ""
+            return dev, gpu
+        except Exception:
+            return "", ""
 
     @property
     def sample_rate(self) -> int:
@@ -218,7 +453,8 @@ class Engine:
     def synthesize(self, text: str, profile: VoiceProfile | None, style: str = "",
                    use_transcript: bool = True, cfg_value: float = 2.0,
                    inference_timesteps: int = 10, normalize: bool = False,
-                   denoise: bool = False, progress=None) -> tuple[int, np.ndarray]:
+                   denoise: bool = False, progress=None, cancel: threading.Event | None = None
+                   ) -> tuple[int, np.ndarray]:
         chunks = split_text(text)
         if not chunks:
             raise ValueError("Bitte einen Text eingeben.")
@@ -242,17 +478,24 @@ class Engine:
         style = style.strip().strip("()")
         prefix = f"({style})" if style and not ultimate else ""
 
+        if progress:
+            progress(0.0, "Lade Modell …" if self._model is None else "Starte …")
         model = self.model
         sr = self.sample_rate
         pause = np.zeros(int(0.2 * sr), dtype=np.float32)
         out: list[np.ndarray] = []
-        for i, chunk in enumerate(chunks):
-            if progress is not None:
-                progress((i, len(chunks)), desc=f"Erzeuge Abschnitt {i + 1}/{len(chunks)}")
-            wav = model.generate(text=prefix + chunk, **kwargs)
-            if out:
-                out.append(pause)
-            out.append(np.asarray(wav, dtype=np.float32))
+        with self._gen_lock:
+            for i, chunk in enumerate(chunks):
+                if cancel is not None and cancel.is_set():
+                    raise Cancelled()
+                if progress:
+                    progress(i / len(chunks), f"Erzeuge Abschnitt {i + 1} von {len(chunks)}")
+                wav = model.generate(text=prefix + chunk, **kwargs)
+                if out:
+                    out.append(pause)
+                out.append(np.asarray(wav, dtype=np.float32))
+        if progress:
+            progress(1.0, "Fertig")
         return sr, np.concatenate(out)
 
     # ---- Spracherkennung (für automatisches Transkript) ----
@@ -269,11 +512,3 @@ class Engine:
         res = self._asr.generate(input=wav_path, language="auto", use_itn=True)
         text = res[0]["text"] if res else ""
         return text.split("|>")[-1].strip()
-
-
-def save_output(sr: int, audio: np.ndarray, voice_name: str | None) -> Path:
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    tag = safe_name(voice_name) if voice_name else "standard"
-    path = OUTPUTS_DIR / f"{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}_{tag}.wav"
-    sf.write(path, audio, sr)
-    return path

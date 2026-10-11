@@ -8,3 +8,7 @@ pretrained_models/
 python/
 install.log
 *.exe
+webview_data/
+recordings/
+settings.json
+voiceclone.log

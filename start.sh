@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Startet VoiceClone v2 (legt beim ersten Start eine virtuelle Umgebung an)
+# Startet VoiceClone v2 unter Linux/macOS (legt beim ersten Start eine virtuelle Umgebung an)
 set -e
 cd "$(dirname "$0")"
 if [ ! -d .venv ]; then
@@ -7,4 +7,4 @@ if [ ! -d .venv ]; then
   .venv/bin/pip install --upgrade pip
   .venv/bin/pip install -r requirements.txt
 fi
-exec .venv/bin/python app.py "$@"
+exec .venv/bin/python voiceclone.pyw "$@"

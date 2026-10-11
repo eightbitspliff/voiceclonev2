@@ -18,3 +18,4 @@ jobs:
         with:
           name: VoiceCloneV2-Setup
           path: installer/VoiceCloneV2-Setup.exe
+          if-no-files-found: error
